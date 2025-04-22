@@ -14,6 +14,7 @@ LARGE_MUTATION_PROBABILITY = 0.05 # Probability of large mutation per point
 LARGE_MUTATION_MAGNITUDE = 80 # Max change for large mutation
 SHAPE_POINTS = 80  # Number of points in our evolving shape
 TARGET_RADIUS = 150 # General radius for target shapes
+UPDATE_INTERVAL = 20 # How often to update the screen (every N generations)
 
 # Define Shape Types (Using integers for potential future mapping)
 class ShapeType(Enum):
@@ -331,6 +332,7 @@ def main():
     t = turtle.Turtle()
     t.speed(0)
     t.hideturtle()
+    t.pensize(4) # Set pensize for target
 
     # Create initial population and target
     population = [Shape() for _ in range(POPULATION_SIZE)]
@@ -339,55 +341,54 @@ def main():
     target = create_target_shape(target_type) 
 
     generation = 0
-    history_shapes = []  # Store the best shape from each generation
-    MAX_HISTORY = 20     # Max number of historical shapes to show
+    history_shapes = []
+    MAX_HISTORY = 20
 
-    t.pensize(4)
     while generation < GENERATIONS:
-        # Add current best shape to history before evolving
+        # --- Evolution Step (Always runs) ---
+        # Add current best shape to history *before* evolving population
         if population: # Ensure population is not empty
-             history_shapes.append(population[0])
-             if len(history_shapes) > MAX_HISTORY:
-                 history_shapes.pop(0) # Keep history size limited
+             # Only store history when drawing to avoid storing identical shapes if interval > 1
+             if generation % UPDATE_INTERVAL == 0 or generation == GENERATIONS - 1:
+                 history_shapes.append(population[0])
+                 if len(history_shapes) > MAX_HISTORY:
+                     history_shapes.pop(0)
 
-        # Clear the screen
-        t.clear()
-
-        # Draw historical shapes first (light gray, thin)
-        t.color("lightgray")
-        for historical_shape in history_shapes:
-             historical_shape.draw(t, "lightgray")
-
-        # Draw target shape (red, thick)
-        target.draw(t, "red")
-
-        # Draw current best shape (evolving color)
-        if population: # Check if population still exists
-            progress = generation / GENERATIONS
-            # Ensure color component stays within 0-255
-            green_component = min(255, int(255 * progress)) 
-            # Format as #00GG00, ensuring two hex digits for green
-            color = f"#00{green_component:02x}00" 
-            population[0].draw(t, color)
-
-        # Display generation number
-        t.penup()
-        t.goto(-380, 350)
-        t.write(f"Generation: {generation}", font=("Arial", 16, "normal"))
-
-        # Display target shape type
-        t.goto(-380, 330) # Position below generation number
-        t.write(f"Target: {target_type.name}", font=("Arial", 16, "normal"))
-
-        # Update the screen
-        screen.update()
-
-        # Evolve the population for the *next* generation
+        # Evolve the population for the *next* generation (This is the core logic)
         population = evolve_population(population, target)
-        generation += 1
+        
+        # --- Drawing Step (Runs periodically) ---
+        if generation % UPDATE_INTERVAL == 0 or generation == GENERATIONS - 1:
+            t.clear()
+            t.penup() # Ensure pen is up before moving/writing
 
-        # Small delay to see the evolution
-        time.sleep(0.01)
+            # Draw historical shapes first (light gray, thin)
+            t.color("lightgray")
+            for historical_shape in history_shapes:
+                 historical_shape.draw(t, "lightgray")
+
+            # Draw target shape (red, thick)
+            target.draw(t, "red")
+
+            # Draw current best shape (evolving color)
+            if population: # Check if population still exists
+                progress = generation / GENERATIONS
+                green_component = min(255, int(255 * progress))
+                color = f"#00{green_component:02x}00"
+                population[0].draw(t, color)
+
+            # Display generation number and target type
+            t.penup()
+            t.goto(-380, 350)
+            t.write(f"Generation: {generation}", font=("Arial", 16, "normal"))
+            t.goto(-380, 330)
+            t.write(f"Target: {target_type.name}", font=("Arial", 16, "normal"))
+
+            # Update the screen (Only happens periodically now)
+            screen.update()
+
+        # Increment generation counter
+        generation += 1
 
     screen.exitonclick()
 
