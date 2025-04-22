@@ -25,6 +25,8 @@ CORPSE_TO_FOOD_TIME = 350  # How long until a corpse becomes food
 OBSTACLE_EROSION_AMOUNT = 2  # How much obstacles shrink when hit
 POOP_CHANCE = 0.1  # Chance to create a small obstacle after eating
 POOP_SIZE_RANGE = (5, 10)  # Size range for poop obstacles
+SPECIES_SIMILARITY_THRESHOLD = 0.15  # Maximum genome difference for same species
+MAX_TRACKED_SPECIES = 6  # Maximum number of species to track and display
 
 # Colors
 WHITE = (255, 255, 255)
@@ -35,6 +37,18 @@ BLUE = (50, 100, 255)  # Lighter blue for organisms
 YELLOW = (255, 255, 0)
 GRAY = (80, 80, 80)  # Darker gray for obstacles
 BROWN = (139, 69, 19)  # Brown for obstacles
+
+# Species colors - used to clearly distinguish different species
+SPECIES_COLORS = [
+    (255, 0, 0),    # Red
+    (0, 0, 255),    # Blue
+    (0, 200, 0),    # Green
+    (255, 165, 0),  # Orange
+    (128, 0, 128),  # Purple
+    (0, 255, 255),  # Cyan
+    (255, 255, 0),  # Yellow
+    (255, 105, 180) # Pink
+]
 
 class Food:
     def __init__(self, position=None):
@@ -254,6 +268,10 @@ class Obstacle:
         return distance < (self.radius + radius)
 
 class Organism:
+    # Class variable to assign and track species IDs
+    next_species_id = 1
+    species_registry = {}  # Map species_id to stats like count, avg fitness, etc.
+    
     def __init__(self, genome=None, position=None, parent=None):
         # Position and physics
         if position:
@@ -276,11 +294,17 @@ class Organism:
         self.decomposing = False  # Whether the corpse is turning into food
         self.decompose_timer = 0  # Track decomposition progress
         self.generation = 1 if parent is None else parent.generation + 1  # Track organism generation
+        
+        # Species identification
+        self.parent_species_id = parent.species_id if parent else None
+        self.species_id = None  # To be assigned after genome creation
+        
+        # Individual color variation
         self.color_variation = (
             random.randint(-20, 20),
             random.randint(-20, 20),
             random.randint(-20, 20)
-        )  # Individual color variation
+        )
         
         # Genome defines the organism's behavior
         if genome is None:
@@ -313,6 +337,9 @@ class Organism:
         
         # Calculate base fitness
         self.fitness = 0
+        
+        # Assign a species ID
+        self.determine_species()
             
     def sense_environment(self, foods, obstacles):
         # Return a list of sensory inputs based on vision
@@ -583,13 +610,28 @@ class Organism:
                         pygame.draw.circle(death_surf, decomp_color, 
                                          (int(spot_x), int(spot_y)), int(spot_size))
             else:
+                # Get color based on species (but grayed out since it's dead)
+                if self.species_id and self.species_id in Organism.species_registry:
+                    species_info = Organism.species_registry[self.species_id]
+                    if 'color' in species_info:
+                        base_color = species_info['color']
+                        # Make a grayer version of the species color
+                        gray_color = (
+                            int((base_color[0] + 100) / 2),
+                            int((base_color[1] + 100) / 2),
+                            int((base_color[2] + 100) / 2),
+                            alpha
+                        )
+                    else:
+                        gray_color = (100, 100, 100, alpha)
+                else:
+                    gray_color = (100, 100, 100, alpha)
+                
                 # Regular dead organism as an "X"
                 size = int(self.radius * 0.8)
-                color = (100, 100, 100, alpha)
-                
-                pygame.draw.line(death_surf, color, 
+                pygame.draw.line(death_surf, gray_color, 
                                (x - size, y - size), (x + size, y + size), 2)
-                pygame.draw.line(death_surf, color, 
+                pygame.draw.line(death_surf, gray_color, 
                                (x + size, y - size), (x - size, y + size), 2)
                 
             surface.blit(death_surf, (0, 0))
@@ -597,12 +639,22 @@ class Organism:
             
         # Draw body as a small creature with eyes
         
-        # Calculate color based on base + variation
-        base_color = BLUE  # Base blue color
+        # Get color based on species
+        if self.species_id and self.species_id in Organism.species_registry:
+            # Use predefined color for tracked species
+            species_info = Organism.species_registry[self.species_id]
+            if 'color' in species_info:
+                base_color = species_info['color']
+            else:
+                base_color = BLUE  # Default for untracked species
+        else:
+            base_color = BLUE  # Default for unidentified species
+        
+        # Apply individual variation to the species base color
         body_color = (
-            max(0, min(255, base_color[0] + self.color_variation[0])),
-            max(0, min(255, base_color[1] + self.color_variation[1])),
-            max(0, min(255, base_color[2] + self.color_variation[2]))
+            max(0, min(255, base_color[0] + self.color_variation[0] // 2)),  # Reduced variation
+            max(0, min(255, base_color[1] + self.color_variation[1] // 2)),
+            max(0, min(255, base_color[2] + self.color_variation[2] // 2))
         )
         
         # Main body (customized oval based on size factor)
@@ -694,12 +746,85 @@ class Organism:
                         bar_width * min(1, max(0, energy_percentage)), 
                         bar_height))
         
-        # Draw small generation indicator (only in detailed mode)
-        if not FAST_MODE and self.generation > 1:
-            gen_text = str(self.generation)
+        # Draw small generation and species indicator (only in detailed mode)
+        if not FAST_MODE:
             small_font = pygame.font.SysFont(None, 14)
-            gen_surf = small_font.render(gen_text, True, WHITE)
-            surface.blit(gen_surf, (x - 3, y - self.radius - 20))
+            
+            # Show generation number
+            if self.generation > 1:
+                gen_text = str(self.generation)
+                gen_surf = small_font.render(gen_text, True, WHITE)
+                surface.blit(gen_surf, (x - 3, y - self.radius - 20))
+                
+            # Show species ID, if we're tracking this species
+            if self.species_id and self.species_id in Organism.species_registry:
+                species_info = Organism.species_registry[self.species_id]
+                if 'rank' in species_info and species_info['rank'] <= MAX_TRACKED_SPECIES:
+                    # Use a letter A-F for top species to make it easier to read
+                    species_letter = chr(64 + species_info['rank'])  # A=1, B=2, etc.
+                    species_surf = small_font.render(species_letter, True, WHITE)
+                    surface.blit(species_surf, (x - 3, y - self.radius - 35))
+    
+    def determine_species(self):
+        """Assigns a species ID to this organism based on its genome."""
+        # If we're a child, start with our parent's species as default
+        if self.parent_species_id is not None:
+            parent_genome = None
+            if self.parent_species_id in Organism.species_registry:
+                parent_genome = Organism.species_registry[self.parent_species_id].get('prototype_genome')
+                
+            # If we have access to parent species genome, check if we're still similar enough
+            if parent_genome:
+                # Check genetic distance from parent species
+                if self.genetic_distance(parent_genome) <= SPECIES_SIMILARITY_THRESHOLD:
+                    # Same species as parent
+                    self.species_id = self.parent_species_id
+                    return
+                    
+        # Either no parent species or we've diverged - find a matching species
+        for species_id, info in Organism.species_registry.items():
+            if 'prototype_genome' in info:
+                if self.genetic_distance(info['prototype_genome']) <= SPECIES_SIMILARITY_THRESHOLD:
+                    # Found a matching species
+                    self.species_id = species_id
+                    return
+                    
+        # No match found - create a new species
+        self.species_id = Organism.next_species_id
+        
+        # Register the new species with this organism's genome as prototype
+        Organism.species_registry[self.species_id] = {
+            'prototype_genome': self.genome.copy(),
+            'creation_time': time.time(),
+            'count': 0,
+            'peak_count': 0,
+            'color': random.choice(SPECIES_COLORS),
+            'avg_fitness': 0,
+            'max_fitness': 0,
+            'rank': 999  # Will be updated during stats collection
+        }
+        
+        Organism.next_species_id += 1
+        
+    def genetic_distance(self, other_genome):
+        """Calculate genetic distance between this organism's genome and another genome."""
+        if not other_genome:
+            return 1.0  # Maximum distance if no comparison genome
+            
+        # Calculate normalized distance across all genes
+        total_distance = 0
+        for gene, value in self.genome.items():
+            if gene in other_genome:
+                # Normalize by the larger value to get relative difference
+                max_val = max(abs(value), abs(other_genome[gene]))
+                if max_val == 0:
+                    gene_dist = 0  # Both values are 0
+                else:
+                    gene_dist = abs(value - other_genome[gene]) / max_val
+                total_distance += gene_dist
+                
+        # Average distance across all genes
+        return total_distance / len(self.genome)
     
     def mutate(self):
         # Create a copy of the genome
@@ -870,6 +995,45 @@ def simulate_generation(population, screen):
         'alive_count': alive_count
     }
 
+def update_species_statistics(population):
+    """Update species statistics and rank the top species."""
+    # Reset counts for all species
+    for species_id in Organism.species_registry:
+        Organism.species_registry[species_id]['count'] = 0
+        Organism.species_registry[species_id]['avg_fitness'] = 0
+        
+    # Count organisms per species and calculate fitness
+    species_organisms = {}
+    for organism in population:
+        if organism.species_id:
+            if organism.species_id not in species_organisms:
+                species_organisms[organism.species_id] = []
+            species_organisms[organism.species_id].append(organism)
+    
+    # Update species stats
+    for species_id, organisms in species_organisms.items():
+        if species_id in Organism.species_registry:
+            species_info = Organism.species_registry[species_id]
+            count = len(organisms)
+            species_info['count'] = count
+            species_info['peak_count'] = max(species_info['peak_count'], count)
+            
+            # Calculate fitness stats
+            if organisms:
+                avg_fitness = sum(calculate_fitness(o) for o in organisms) / len(organisms)
+                max_fitness = max(calculate_fitness(o) for o in organisms)
+                species_info['avg_fitness'] = avg_fitness
+                species_info['max_fitness'] = max(species_info['max_fitness'], max_fitness)
+    
+    # Rank species by population count (could also use fitness)
+    active_species = [(sid, info) for sid, info in Organism.species_registry.items() 
+                     if info['count'] > 0]
+    ranked_species = sorted(active_species, key=lambda x: x[1]['count'], reverse=True)
+    
+    # Update ranks (only for active species)
+    for rank, (species_id, _) in enumerate(ranked_species, 1):
+        Organism.species_registry[species_id]['rank'] = rank
+
 def simulate_continuous_evolution(screen):
     # Setup environment
     population = [Organism() for _ in range(POPULATION_SIZE)]
@@ -986,9 +1150,25 @@ def simulate_continuous_evolution(screen):
         # Track statistics
         if step % stat_collection_interval == 0:
             if population:
+                # Update species statistics
+                update_species_statistics(population)
+                
+                # Get generation stats
                 avg_generation = sum(o.generation for o in population) / len(population)
                 max_generation = max(o.generation for o in population)
                 highest_generation = max(highest_generation, max_generation)
+                
+                # Count species
+                species_count = len([s for s, info in Organism.species_registry.items() 
+                                   if info['count'] > 0])
+                
+                # Get top species info if any exists
+                top_species_info = None
+                top_species = [s for s, info in Organism.species_registry.items() 
+                              if info['rank'] == 1 and info['count'] > 0]
+                if top_species:
+                    top_species_id = top_species[0]
+                    top_species_info = Organism.species_registry[top_species_id]
                 
                 stats = {
                     'step': step,
@@ -996,7 +1176,11 @@ def simulate_continuous_evolution(screen):
                     'alive_count': alive_count,
                     'food_count': active_food_count,
                     'avg_generation': avg_generation,
-                    'max_generation': max_generation
+                    'max_generation': max_generation,
+                    'species_count': species_count,
+                    'top_species_id': top_species[0] if top_species else None,
+                    'top_species_count': top_species_info['count'] if top_species_info else 0,
+                    'top_species_fitness': top_species_info['avg_fitness'] if top_species_info else 0,
                 }
                 stats_history.append(stats)
                 
@@ -1050,12 +1234,57 @@ def draw_simulation(screen, population, foods, obstacles, step, font):
     # Count poop obstacles for stats
     poop_count = sum(1 for o in obstacles if o.is_poop)
     
+    # Count species for stats
+    species_count = len([s for s, info in Organism.species_registry.items() 
+                       if info['count'] > 0])
+                       
+    # Get top species info
+    top_species = [s for s, info in Organism.species_registry.items() 
+                  if info['rank'] == 1 and info['count'] > 0]
+    top_species_id = top_species[0] if top_species else None
+    
     # Display statistics
     stats_text = [
         f"Step: {step} | Population: {alive_count}/{total_count} | Food: {active_food}/{len(foods)}",
-        f"Generations: Avg {avg_gen:.1f} | Max {max_gen} | Obstacles: {len(obstacles) - poop_count}/{poop_count}",
-        f"{'FAST MODE' if FAST_MODE else 'DETAILED MODE'} - Press SPACE to toggle | Press P to pause"
+        f"Generations: Avg {avg_gen:.1f} | Max {max_gen} | Species: {species_count}",
+        f"Obstacles: {len(obstacles) - poop_count}/{poop_count} | {'FAST MODE' if FAST_MODE else 'DETAILED MODE'} | P: pause"
     ]
+    
+    # Add species key if we have tracked species and in detailed mode
+    if not FAST_MODE and species_count > 0:
+        # Draw species legend
+        legend_y = 75
+        legend_text = "Species: "
+        legend_surf = font.render(legend_text, True, BLACK)
+        screen.blit(legend_surf, (10, legend_y))
+        
+        # Draw colored squares for top species
+        square_size = 15
+        x_offset = 10 + legend_surf.get_width() + 5
+        
+        top_species_to_show = min(MAX_TRACKED_SPECIES, species_count)
+        for rank in range(1, top_species_to_show + 1):
+            matching_species = [s for s, info in Organism.species_registry.items() 
+                              if info['rank'] == rank and info['count'] > 0]
+            if matching_species:
+                species_id = matching_species[0]
+                species_info = Organism.species_registry[species_id]
+                
+                # Draw colored square
+                color = species_info['color']
+                pygame.draw.rect(screen, color, 
+                               (x_offset, legend_y, square_size, square_size))
+                
+                # Add letter label
+                species_letter = chr(64 + rank)  # A=1, B=2, etc.
+                label_surf = font.render(species_letter, True, BLACK)
+                screen.blit(label_surf, (x_offset + square_size + 2, legend_y))
+                
+                # Add count
+                count_surf = font.render(f"{species_info['count']}", True, BLACK)
+                screen.blit(count_surf, (x_offset + square_size + 15, legend_y))
+                
+                x_offset += square_size + 40
     
     for i, text in enumerate(stats_text):
         text_surface = font.render(text, True, BLACK)
@@ -1102,9 +1331,25 @@ def main():
         max_generation = max(s['max_generation'] for s in stats)
         max_steps = stats[-1]['step']
         
-        # Draw data points and lines for population and generation
-        pop_points = []
-        gen_points = []
+        # Track species of interest
+        # Extract unique species IDs that were "top species" at some point
+        dominant_species = set()
+        for stat in stats:
+            if 'top_species_id' in stat and stat['top_species_id'] is not None:
+                dominant_species.add(stat['top_species_id'])
+        
+        # Prepare species legend and colors
+        species_colors = {}
+        for i, species_id in enumerate(dominant_species):
+            if species_id in Organism.species_registry:
+                species_colors[species_id] = Organism.species_registry[species_id].get('color', (0, 0, 0))
+            else:
+                species_colors[species_id] = SPECIES_COLORS[i % len(SPECIES_COLORS)]
+        
+        # Draw data points and lines
+        pop_points = []  # Total population
+        gen_points = []  # Max generation
+        species_points = {}  # Points per dominant species
         
         for i, stat in enumerate(stats):
             x = graph_margin + (stat['step'] / max_steps) * graph_width
@@ -1117,7 +1362,24 @@ def main():
             gen_y = graph_margin + graph_height - (stat['max_generation'] / max_generation * graph_height * 0.8)
             gen_points.append((x, gen_y))
             
-        # Draw lines connecting points
+            # Species counts
+            if 'top_species_id' in stat and stat['top_species_id'] is not None:
+                species_id = stat['top_species_id']
+                if species_id not in species_points:
+                    species_points[species_id] = []
+                
+                if 'top_species_count' in stat and stat['top_species_count'] > 0:
+                    # Plot species population normalized to max population
+                    species_y = graph_margin + graph_height - (stat['top_species_count'] / max_population * graph_height * 0.8)
+                    species_points[species_id].append((x, species_y))
+            
+        # Draw species lines first (under the main metrics)
+        for species_id, points in species_points.items():
+            if len(points) > 1:
+                color = species_colors.get(species_id, (100, 100, 100))
+                pygame.draw.lines(screen, color, False, points, 2)
+        
+        # Draw main metric lines
         if len(pop_points) > 1:
             pygame.draw.lines(screen, (0, 0, 255), False, pop_points, 2)
             pygame.draw.lines(screen, (255, 0, 0), False, gen_points, 2)
@@ -1136,17 +1398,38 @@ def main():
         screen.blit(y_label_rotated, (graph_margin - 40, 
                                     graph_margin + graph_height // 2 - y_label_rotated.get_height() // 2))
                                     
-        # Draw legend
-        pygame.draw.line(screen, (255, 0, 0), (graph_margin + graph_width + 10, graph_margin + 20),
-                       (graph_margin + graph_width + 40, graph_margin + 20), 2)
-        pygame.draw.line(screen, (0, 0, 255), (graph_margin + graph_width + 10, graph_margin + 50),
-                       (graph_margin + graph_width + 40, graph_margin + 50), 2)
-                       
+        # Draw main metrics legend
+        legend_y = graph_margin + 20
+        pygame.draw.line(screen, (255, 0, 0), (graph_margin + graph_width + 10, legend_y),
+                       (graph_margin + graph_width + 40, legend_y), 2)
         gen_label = font.render("Max Generation", True, BLACK)
-        pop_label = font.render("Population", True, BLACK)
+        screen.blit(gen_label, (graph_margin + graph_width + 50, legend_y - 5))
         
-        screen.blit(gen_label, (graph_margin + graph_width + 50, graph_margin + 10))
-        screen.blit(pop_label, (graph_margin + graph_width + 50, graph_margin + 40))
+        legend_y += 30
+        pygame.draw.line(screen, (0, 0, 255), (graph_margin + graph_width + 10, legend_y),
+                       (graph_margin + graph_width + 40, legend_y), 2)
+        pop_label = font.render("Total Population", True, BLACK)
+        screen.blit(pop_label, (graph_margin + graph_width + 50, legend_y - 5))
+        
+        # Draw species legend (showing top species that were dominant at some point)
+        legend_y += 40
+        species_title = font.render("Dominant Species:", True, BLACK)
+        screen.blit(species_title, (graph_margin + graph_width + 10, legend_y))
+        
+        for i, (species_id, color) in enumerate(species_colors.items()):
+            if i < 6:  # Limit to 6 species in legend to avoid clutter
+                legend_y += 20
+                pygame.draw.line(screen, color, (graph_margin + graph_width + 10, legend_y),
+                               (graph_margin + graph_width + 40, legend_y), 2)
+                
+                # Show species ID and any info we have
+                if species_id in Organism.species_registry:
+                    info = Organism.species_registry[species_id]
+                    species_label = font.render(f"Species {species_id} (Gen {info.get('rank', '?')})", True, BLACK)
+                else:
+                    species_label = font.render(f"Species {species_id}", True, BLACK)
+                    
+                screen.blit(species_label, (graph_margin + graph_width + 50, legend_y - 5))
         
         pygame.display.flip()
         
