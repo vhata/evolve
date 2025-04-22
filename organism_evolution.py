@@ -3,7 +3,10 @@ import random
 import math
 import numpy as np
 import time
+import os
 from typing import List, Tuple, Dict
+from stats import StatsTracker
+from stats.stats_collector import collect_basic_stats, collect_species_stats, collect_food_stats
 
 # Constants
 WINDOW_WIDTH = 800
@@ -27,6 +30,8 @@ POOP_CHANCE = 0.1  # Chance to create a small obstacle after eating
 POOP_SIZE_RANGE = (5, 10)  # Size range for poop obstacles
 SPECIES_SIMILARITY_THRESHOLD = 0.15  # Maximum genome difference for same species
 MAX_TRACKED_SPECIES = 6  # Maximum number of species to track and display
+STATS_COLLECTION_INTERVAL = 100  # How often to collect stats (every N steps)
+ENABLE_STATS_TRACKING = True  # Whether to track and save statistics
 
 # Food type constants
 class FoodType:
@@ -1348,6 +1353,41 @@ def simulate_continuous_evolution(screen):
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 24)
     
+    # Initialize stats tracker if enabled
+    stats_tracker = None
+    if ENABLE_STATS_TRACKING:
+        stats_tracker = StatsTracker()
+        
+        # Record simulation parameters
+        simulation_params = {
+            'WINDOW_WIDTH': WINDOW_WIDTH,
+            'WINDOW_HEIGHT': WINDOW_HEIGHT,
+            'POPULATION_SIZE': POPULATION_SIZE,
+            'FPS': FPS,
+            'MUTATION_RATE': MUTATION_RATE,
+            'LARGE_MUTATION_PROBABILITY': LARGE_MUTATION_PROBABILITY,
+            'FOOD_COUNT': FOOD_COUNT,
+            'OBSTACLE_COUNT': OBSTACLE_COUNT,
+            'MAX_POPULATION': MAX_POPULATION,
+            'REPRODUCTION_ENERGY': REPRODUCTION_ENERGY,
+            'FOOD_RESPAWN_RATE': FOOD_RESPAWN_RATE,
+            'SPECIES_SIMILARITY_THRESHOLD': SPECIES_SIMILARITY_THRESHOLD,
+            'FOOD_TYPE_PROBS': {
+                'STANDARD': FOOD_TYPE_PROBS[FoodType.STANDARD],
+                'RICH': FOOD_TYPE_PROBS[FoodType.RICH],
+                'SUPERFOOD': FOOD_TYPE_PROBS[FoodType.SUPERFOOD],
+                'JUNK': FOOD_TYPE_PROBS[FoodType.JUNK]
+            }
+        }
+        stats_tracker.record_parameters(simulation_params)
+        
+        # Log simulation start
+        stats_tracker.log_event('simulation_start', {
+            'init_population': POPULATION_SIZE,
+            'init_food': FOOD_COUNT,
+            'init_obstacles': OBSTACLE_COUNT
+        })
+    
     # Track statistics
     step = 0
     food_respawn_timer = 0
@@ -1423,6 +1463,28 @@ def simulate_continuous_evolution(screen):
                     FOOD_TYPE_PROBS[FoodType.SUPERFOOD] = 0.05
                     FOOD_TYPE_PROBS[FoodType.JUNK] = 0.1
                     print(f"Food type probabilities reset to default: {FOOD_TYPE_PROBS}")
+                    
+                # Stats tracking controls
+                elif event.key == pygame.K_s and ENABLE_STATS_TRACKING and stats_tracker:
+                    # Generate and open a stats report on demand
+                    report_path = stats_tracker.generate_report()
+                    print(f"On-demand statistics report generated: {report_path}")
+                    try:
+                        import webbrowser
+                        webbrowser.open(f"file://{os.path.abspath(report_path)}")
+                    except Exception as e:
+                        print(f"Could not open report in browser: {e}")
+                        
+                elif event.key == pygame.K_t:
+                    # Toggle stats tracking
+                    global ENABLE_STATS_TRACKING
+                    ENABLE_STATS_TRACKING = not ENABLE_STATS_TRACKING
+                    print(f"Statistics tracking: {'ENABLED' if ENABLE_STATS_TRACKING else 'DISABLED'}")
+                    
+                    # Initialize stats tracker if we just enabled tracking
+                    if ENABLE_STATS_TRACKING and not stats_tracker:
+                        stats_tracker = StatsTracker()
+                        stats_tracker.log_event('tracking_started_mid_simulation', {'step': step})
         
         # Skip simulation if paused
         if paused:
@@ -1646,12 +1708,65 @@ def simulate_continuous_evolution(screen):
                 # Keep only last 1000 stat points to prevent memory bloat
                 if len(stats_history) > 1000:
                     stats_history.pop(0)
+                    
+        # Collect and store detailed statistics if enabled
+        if ENABLE_STATS_TRACKING and stats_tracker and step % STATS_COLLECTION_INTERVAL == 0:
+            # Basic simulation statistics
+            basic_stats = collect_basic_stats(population, foods, obstacles)
+            stats_tracker.record_time_series(step, basic_stats)
+            
+            # Species-specific statistics
+            species_stats = collect_species_stats(population, Organism.species_registry)
+            stats_tracker.record_species_data(step, species_stats)
+            
+            # Food distribution statistics
+            food_stats = collect_food_stats(foods)
+            stats_tracker.record_food_data(step, food_stats)
+            
+            # Log significant events (like extinction or domination of a species)
+            if len(population) < POPULATION_SIZE * 0.2:
+                stats_tracker.log_event('population_crash', {
+                    'step': step,
+                    'population': len(population),
+                    'alive_count': alive_count
+                })
+                
+            # Log if a species becomes dominant (over 50% of population)
+            for species_id, info in Organism.species_registry.items():
+                if info.get('count', 0) > len(population) * 0.5:
+                    stats_tracker.log_event('species_dominance', {
+                        'step': step,
+                        'species_id': species_id,
+                        'count': info.get('count', 0),
+                        'percentage': info.get('count', 0) / max(1, len(population))
+                    })
         
         # Draw everything
         draw_simulation(screen, population, foods, obstacles, step, font)
         
         # Maintain framerate
         clock.tick(FPS * (3 if FAST_MODE else 1))
+    
+    # Close stats tracking and generate report if enabled
+    if ENABLE_STATS_TRACKING and stats_tracker:
+        stats_tracker.log_event('simulation_end', {
+            'step': step,
+            'final_population': len(population),
+            'final_alive_count': alive_count,
+            'final_species_count': species_count,
+            'max_generation_reached': highest_generation
+        })
+        
+        # Generate HTML report
+        report_path = stats_tracker.generate_report()
+        print(f"Statistics report generated: {report_path}")
+        
+        # Attempt to open the report in the default browser
+        try:
+            import webbrowser
+            webbrowser.open(f"file://{os.path.abspath(report_path)}")
+        except Exception as e:
+            print(f"Could not open report in browser: {e}")
     
     return stats_history
 
@@ -1753,7 +1868,8 @@ def draw_simulation(screen, population, foods, obstacles, step, font):
         f"Step: {step} | Population: {alive_count}/{total_count} | Food: {active_food}/{len(foods)}",
         f"Generations: Avg {avg_gen:.1f} | Max {max_gen} | Species: {species_count}",
         f"Obstacles: {len(obstacles) - poop_count}/{poop_count} | {'FAST MODE' if FAST_MODE else 'DETAILED MODE'} | P: pause",
-        f"Food Controls: 1-4 adjust food types, R: reset distribution"
+        f"Food Controls: 1-4 adjust food types, R: reset distribution",
+        f"Stats: {'TRACKING' if ENABLE_STATS_TRACKING else 'OFF'} | S: generate report | T: toggle tracking"
     ]
     
     # Add food type distribution

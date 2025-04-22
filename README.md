@@ -34,6 +34,8 @@ The primary simulation models a complete ecosystem with the following elements:
 - Statistics tracking for population, generations, and species
 - Energy and health indicators for organisms
 - Fast/detailed view modes
+- Advanced statistics tracking with HTML reports and data export
+- Performance graphs of simulation progress
 
 ### Evolution Tracking
 - Species emergence and extinction tracking
@@ -78,6 +80,8 @@ python shape_evolution.py
 - **P**: Pause/resume simulation
 - **1-4**: Adjust probabilities of different food types appearing
 - **R**: Reset food type distribution to default
+- **S**: Generate and view current statistics report (while simulation is running)
+- **T**: Toggle statistics tracking on/off
 
 ## TODO - Future Enhancements
 
@@ -110,10 +114,12 @@ python shape_evolution.py
 - [ ] Create communication mechanisms between organisms
 
 ### Richer Statistics & Visualization
+- [x] Track statistics about species, population, and food distribution
+- [x] Create exportable data for external analysis
+- [x] Generate visualization reports of simulation progress
 - [ ] Track genealogy trees for individuals
 - [ ] Show evolutionary pressure maps on the environment
 - [ ] Offer more detailed analysis of which traits led to success
-- [ ] Create exportable data for external analysis
 - [ ] Add 3D visualization options
 
 ### User Interface Improvements
