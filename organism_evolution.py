@@ -2,20 +2,25 @@ import pygame
 import random
 import math
 import numpy as np
+import time
 from typing import List, Tuple, Dict
 
 # Constants
 WINDOW_WIDTH = 800
 WINDOW_HEIGHT = 800
 POPULATION_SIZE = 50
-GENERATIONS = 500
-FPS = 120  # Increased from 60 to 120 for faster simulation
-SIMULATION_STEPS = 500  # Reduced from 1000 to 500 steps per generation
+FPS = 120  # Frame rate for simulation
 FAST_MODE = True  # Toggle to run simulation faster with minimal visuals
 MUTATION_RATE = 0.1
 LARGE_MUTATION_PROBABILITY = 0.05
 FOOD_COUNT = 20
 OBSTACLE_COUNT = 10
+MAX_POPULATION = 100  # Maximum number of organisms allowed
+REPRODUCTION_ENERGY = 800  # Energy threshold for reproduction
+FOOD_RESPAWN_RATE = 0.02  # Probability of new food appearing each frame
+OBSTACLE_MOVE_CHANCE = 0.005  # Probability of obstacle moving each frame
+OBSTACLE_SPEED = 1.0  # Speed at which obstacles move
+CORPSE_DECAY_TIME = 500  # How long dead organisms stay visible
 
 # Colors
 WHITE = (255, 255, 255)
@@ -28,23 +33,42 @@ GRAY = (80, 80, 80)  # Darker gray for obstacles
 BROWN = (139, 69, 19)  # Brown for obstacles
 
 class Food:
-    def __init__(self):
-        self.position = (
-            random.randint(50, WINDOW_WIDTH - 50),
-            random.randint(50, WINDOW_HEIGHT - 50)
-        )
+    def __init__(self, position=None):
+        if position:
+            self.position = position
+        else:
+            self.position = (
+                random.randint(50, WINDOW_WIDTH - 50),
+                random.randint(50, WINDOW_HEIGHT - 50)
+            )
         self.radius = 5
         self.energy = 100
         self.active = True
+        self.age = 0
         
+    def update(self):
+        # Food becomes more nutritious as it ages (simulating growth)
+        if self.active and self.age < 300:  # Cap at 300 frames
+            self.age += 1
+            if self.age % 50 == 0 and self.energy < 200:
+                self.energy += 10
+            
     def draw(self, surface):
         if self.active:
             # Draw food as a bright green apple-like shape
-            pygame.draw.circle(surface, GREEN, self.position, self.radius)
+            # Bigger and darker green as it ages/becomes more nutritious
+            size_factor = min(1.5, 1.0 + self.age/300)
+            radius = int(self.radius * size_factor)
+            
+            # Calculate color based on age (gets darker/riper)
+            green_val = max(100, 200 - self.age/3)
+            color = (0, green_val, 0)
+            
+            pygame.draw.circle(surface, color, self.position, radius)
             # Add a small stem
             pygame.draw.line(surface, BROWN, 
-                          (self.position[0], self.position[1] - self.radius),
-                          (self.position[0] + 3, self.position[1] - self.radius - 3), 2)
+                          (self.position[0], self.position[1] - radius),
+                          (self.position[0] + 3, self.position[1] - radius - 3), 2)
 
 class Obstacle:
     def __init__(self):
@@ -53,15 +77,58 @@ class Obstacle:
             random.randint(50, WINDOW_HEIGHT - 50)
         )
         self.radius = random.randint(20, 40)
+        self.direction = random.uniform(0, 2 * math.pi)
+        self.speed = 0 
+        self.stationary = random.random() < 0.6  # 60% chance to be stationary
+        
+    def update(self):
+        # Occasionally change direction or start/stop moving
+        if random.random() < OBSTACLE_MOVE_CHANCE:
+            if self.stationary:
+                # Small chance for a stationary obstacle to start moving
+                if random.random() < 0.2:
+                    self.stationary = False
+                    self.speed = OBSTACLE_SPEED * random.uniform(0.5, 1.0)
+                    self.direction = random.uniform(0, 2 * math.pi)
+            else:
+                # Moving obstacle changes direction or stops
+                if random.random() < 0.3:  # 30% chance to stop
+                    self.stationary = True
+                    self.speed = 0
+                else:
+                    # Change direction slightly
+                    self.direction += random.uniform(-0.5, 0.5)
+                
+        # Move if not stationary
+        if not self.stationary:
+            new_x = self.position[0] + math.cos(self.direction) * self.speed
+            new_y = self.position[1] + math.sin(self.direction) * self.speed
+            
+            # Boundary checks and bouncing
+            if new_x < self.radius or new_x > WINDOW_WIDTH - self.radius:
+                self.direction = math.pi - self.direction
+                new_x = max(self.radius, min(WINDOW_WIDTH - self.radius, new_x))
+                
+            if new_y < self.radius or new_y > WINDOW_HEIGHT - self.radius:
+                self.direction = -self.direction
+                new_y = max(self.radius, min(WINDOW_HEIGHT - self.radius, new_y))
+                
+            self.position = (new_x, new_y)
         
     def draw(self, surface):
         # Draw obstacle as a rock with texture
-        pygame.draw.circle(surface, BROWN, self.position, self.radius)
+        pygame.draw.circle(surface, BROWN, (int(self.position[0]), int(self.position[1])), self.radius)
         # Add darker shading on one side
         pygame.draw.arc(surface, GRAY, 
-                      (self.position[0] - self.radius, self.position[1] - self.radius,
+                      (int(self.position[0] - self.radius), int(self.position[1] - self.radius),
                        self.radius * 2, self.radius * 2),
                       math.pi/4, math.pi, self.radius//2)
+                      
+        # Add a small indicator if the obstacle is mobile
+        if not self.stationary:
+            indicator_x = self.position[0] + math.cos(self.direction) * (self.radius * 0.7)
+            indicator_y = self.position[1] + math.sin(self.direction) * (self.radius * 0.7)
+            pygame.draw.circle(surface, (200, 100, 50), (int(indicator_x), int(indicator_y)), 3)
         
     def collides_with(self, x, y, radius):
         dx = self.position[0] - x
@@ -70,12 +137,15 @@ class Obstacle:
         return distance < (self.radius + radius)
 
 class Organism:
-    def __init__(self, genome=None):
+    def __init__(self, genome=None, position=None, parent=None):
         # Position and physics
-        self.position = (
-            random.randint(50, WINDOW_WIDTH - 50),
-            random.randint(50, WINDOW_HEIGHT - 50)
-        )
+        if position:
+            self.position = position
+        else:
+            self.position = (
+                random.randint(50, WINDOW_WIDTH - 50),
+                random.randint(50, WINDOW_HEIGHT - 50)
+            )
         self.radius = 10
         self.direction = random.uniform(0, 2 * math.pi)
         self.speed = 1.0  # Start with some speed instead of 0
@@ -83,6 +153,15 @@ class Organism:
         self.energy = 500
         self.food_eaten = 0
         self.alive = True
+        self.age = 0  # Age in simulation steps
+        self.reproduction_cooldown = 0  # Cooldown before reproducing again
+        self.time_of_death = None  # When the organism died (for decaying corpses)
+        self.generation = 1 if parent is None else parent.generation + 1  # Track organism generation
+        self.color_variation = (
+            random.randint(-20, 20),
+            random.randint(-20, 20),
+            random.randint(-20, 20)
+        )  # Individual color variation
         
         # Genome defines the organism's behavior
         if genome is None:
@@ -94,17 +173,26 @@ class Organism:
                 
                 # Behavior
                 'turn_factor': random.uniform(0.1, 0.5),
-                'speed_factor': random.uniform(0.8, 2.0),  # Increased minimum
+                'speed_factor': random.uniform(0.8, 2.0),
                 'metabolism': random.uniform(0.1, 0.3),
                 
                 # Neural weights (simplified)
                 'food_attraction': random.uniform(0.5, 2.0),
                 'obstacle_avoidance': random.uniform(0.5, 2.0),
-                'exploration_drive': random.uniform(0.3, 1.0)  # Increased minimum
+                'exploration_drive': random.uniform(0.3, 1.0),
+                
+                # New traits for continuous evolution
+                'reproduction_threshold': random.uniform(700, 900),  # Energy needed to reproduce
+                'offspring_energy': random.uniform(0.2, 0.4),  # Percentage of energy to give to offspring
+                'size_factor': random.uniform(0.8, 1.2)  # Size of organism (affects feeding and collision)
             }
         else:
             self.genome = genome
             
+        # Apply size factor to radius
+        self.radius = self.radius * self.genome['size_factor']
+        
+        # Calculate base fitness
         self.fitness = 0
             
     def sense_environment(self, foods, obstacles):
@@ -191,9 +279,17 @@ class Organism:
         
         return turn_strength, speed_change
         
-    def update(self, foods, obstacles):
+    def update(self, foods, obstacles, population):
+        # If dead, just update the decay timer
         if not self.alive:
             return
+            
+        # Increment age
+        self.age += 1
+        
+        # Decrease reproduction cooldown if needed
+        if self.reproduction_cooldown > 0:
+            self.reproduction_cooldown -= 1
             
         # Sense the environment
         sensors = self.sense_environment(foods, obstacles)
@@ -254,33 +350,89 @@ class Organism:
         # Consume energy (metabolism)
         self.energy -= self.genome['metabolism'] * (1 + self.speed)
         
+        # Check for reproduction
+        if (self.energy > self.genome['reproduction_threshold'] and 
+            self.reproduction_cooldown <= 0 and 
+            len(population) < MAX_POPULATION):
+            # Create offspring
+            offspring_energy = self.energy * self.genome['offspring_energy']
+            self.energy -= offspring_energy
+            
+            # Create offspring with slight offset position
+            offset_distance = self.radius * 2
+            offset_angle = random.uniform(0, 2 * math.pi)
+            offspring_pos = (
+                self.position[0] + math.cos(offset_angle) * offset_distance,
+                self.position[1] + math.sin(offset_angle) * offset_distance
+            )
+            
+            # Create mutated offspring
+            offspring = Organism(
+                genome=self.mutate().genome,
+                position=offspring_pos,
+                parent=self
+            )
+            offspring.energy = offspring_energy
+            
+            # Add to population
+            population.append(offspring)
+            
+            # Set reproduction cooldown
+            self.reproduction_cooldown = 100  # Frames before can reproduce again
+        
         # Check if dead
         if self.energy <= 0:
             self.alive = False
+            self.time_of_death = time.time()  # Record time of death for corpse decay
             
     def draw(self, surface):
         x, y = int(self.position[0]), int(self.position[1])
         
         if not self.alive:
-            # Draw dead organism as a gray "X"
+            # Check if corpse should still be displayed
+            if self.time_of_death and time.time() - self.time_of_death > CORPSE_DECAY_TIME / FPS:
+                return  # Too old, don't display
+                
+            # Dead organism fades over time
+            if self.time_of_death:
+                # Calculate alpha based on time since death
+                time_since_death = time.time() - self.time_of_death
+                alpha = max(0, 255 - (time_since_death * 255 * FPS / CORPSE_DECAY_TIME))
+            else:
+                alpha = 150  # Default value if time_of_death not set
+                
+            # Draw dead organism as a gray "X" with fading
             size = int(self.radius * 0.8)
-            pygame.draw.line(surface, (100, 100, 100), 
+            color = (100, 100, 100, alpha)
+            
+            # Create transparent surface
+            death_surf = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+            pygame.draw.line(death_surf, color, 
                            (x - size, y - size), (x + size, y + size), 2)
-            pygame.draw.line(surface, (100, 100, 100), 
+            pygame.draw.line(death_surf, color, 
                            (x + size, y - size), (x - size, y + size), 2)
+            surface.blit(death_surf, (0, 0))
             return
             
         # Draw body as a small creature with eyes
         
-        # Main body (blue oval)
-        pygame.draw.ellipse(surface, BLUE, 
+        # Calculate color based on base + variation
+        base_color = BLUE  # Base blue color
+        body_color = (
+            max(0, min(255, base_color[0] + self.color_variation[0])),
+            max(0, min(255, base_color[1] + self.color_variation[1])),
+            max(0, min(255, base_color[2] + self.color_variation[2]))
+        )
+        
+        # Main body (customized oval based on size factor)
+        pygame.draw.ellipse(surface, body_color, 
                           (x - self.radius, y - self.radius*0.8, 
                            self.radius*2, self.radius*1.6))
         
         # Direction as a small head/protrusion
         head_x = x + math.cos(self.direction) * self.radius * 0.8
         head_y = y + math.sin(self.direction) * self.radius * 0.8
-        pygame.draw.circle(surface, BLUE, (int(head_x), int(head_y)), int(self.radius * 0.5))
+        pygame.draw.circle(surface, body_color, (int(head_x), int(head_y)), int(self.radius * 0.5))
         
         # Eyes (two small white circles with black pupils)
         eye_offset = 0.4
@@ -300,8 +452,8 @@ class Organism:
         pygame.draw.circle(surface, BLACK, (int(left_eye_x), int(left_eye_y)), int(self.radius * 0.1))
         pygame.draw.circle(surface, BLACK, (int(right_eye_x), int(right_eye_y)), int(self.radius * 0.1))
         
-        # Draw vision field - makes it easier to understand organism behavior
-        if True:  # Set to False to hide vision field
+        # Draw vision field in detailed mode only
+        if not FAST_MODE:
             vision_range = self.genome['vision_range']
             field_of_view = self.genome['field_of_view']
             start_angle = self.direction - field_of_view / 2
@@ -309,12 +461,6 @@ class Organism:
             
             # Create a transparent surface for the vision cone
             vision_surf = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-            
-            # Convert floating point values to integers for the rectangle
-            rect_x = int(self.position[0] - vision_range)
-            rect_y = int(self.position[1] - vision_range)
-            rect_width = int(vision_range * 2)
-            rect_height = int(vision_range * 2)
             
             # Draw a transparent triangle instead of an arc (simpler)
             edge1_x = self.position[0] + math.cos(start_angle) * vision_range
@@ -328,36 +474,51 @@ class Organism:
                 (int(edge1_x), int(edge1_y)),
                 (int(edge2_x), int(edge2_y))
             ]
-            pygame.draw.polygon(vision_surf, (255, 255, 0, 30), vision_points)
+            pygame.draw.polygon(vision_surf, (255, 255, 0, 15), vision_points)  # More transparent
             
-            # Draw the edges of the vision cone
-            pygame.draw.line(vision_surf, (255, 255, 0, 60), 
+            # Draw the edges of the vision cone (more subtle)
+            pygame.draw.line(vision_surf, (255, 255, 0, 30), 
                            (int(self.position[0]), int(self.position[1])), 
-                           (int(edge1_x), int(edge1_y)), 2)
-            pygame.draw.line(vision_surf, (255, 255, 0, 60), 
+                           (int(edge1_x), int(edge1_y)), 1)  # Thinner line
+            pygame.draw.line(vision_surf, (255, 255, 0, 30), 
                            (int(self.position[0]), int(self.position[1])), 
-                           (int(edge2_x), int(edge2_y)), 2)
+                           (int(edge2_x), int(edge2_y)), 1)  # Thinner line
             
             surface.blit(vision_surf, (0, 0))
         
         # Draw energy bar
         bar_width = 20
-        bar_height = 5
-        energy_percentage = self.energy / 1000  # Assuming 1000 is max energy
+        bar_height = 4  # Smaller height
+        # Normalize for individual reproduction threshold
+        energy_percentage = self.energy / (self.genome['reproduction_threshold'] * 1.2)
         
         # Background for energy bar (gray)
         pygame.draw.rect(surface, GRAY, 
                        (self.position[0] - bar_width/2, 
-                        self.position[1] - self.radius - 10,
+                        self.position[1] - self.radius - 8,  # Closer to organism
                         bar_width,
                         bar_height))
                         
-        # Actual energy level (red)
-        pygame.draw.rect(surface, RED, 
+        # Actual energy level (gradient from red to yellow to green)
+        if energy_percentage < 0.3:
+            bar_color = RED
+        elif energy_percentage < 0.7:
+            bar_color = YELLOW
+        else:
+            bar_color = GREEN
+            
+        pygame.draw.rect(surface, bar_color, 
                        (self.position[0] - bar_width/2, 
-                        self.position[1] - self.radius - 10,
+                        self.position[1] - self.radius - 8,
                         bar_width * min(1, max(0, energy_percentage)), 
                         bar_height))
+        
+        # Draw small generation indicator (only in detailed mode)
+        if not FAST_MODE and self.generation > 1:
+            gen_text = str(self.generation)
+            small_font = pygame.font.SysFont(None, 14)
+            gen_surf = small_font.render(gen_text, True, WHITE)
+            surface.blit(gen_surf, (x - 3, y - self.radius - 20))
     
     def mutate(self):
         # Create a copy of the genome
@@ -380,8 +541,12 @@ class Organism:
         new_genome['turn_factor'] = max(0.05, min(1.0, new_genome['turn_factor']))
         new_genome['speed_factor'] = max(0.2, min(3.0, new_genome['speed_factor']))
         new_genome['metabolism'] = max(0.05, min(0.5, new_genome['metabolism']))
+        new_genome['reproduction_threshold'] = max(600, min(1200, new_genome['reproduction_threshold']))
+        new_genome['offspring_energy'] = max(0.1, min(0.5, new_genome['offspring_energy']))
+        new_genome['size_factor'] = max(0.6, min(1.5, new_genome['size_factor']))
         
         # Create a new organism with the mutated genome
+        # Note: Position and parent will be set properly when reproduction actually happens
         return Organism(new_genome)
 
 def calculate_fitness(organism):
@@ -524,71 +689,186 @@ def simulate_generation(population, screen):
         'alive_count': alive_count
     }
 
+def simulate_continuous_evolution(screen):
+    # Setup environment
+    population = [Organism() for _ in range(POPULATION_SIZE)]
+    foods = [Food() for _ in range(FOOD_COUNT)]
+    obstacles = [Obstacle() for _ in range(OBSTACLE_COUNT)]
+    
+    # Initialize utilities
+    clock = pygame.time.Clock()
+    font = pygame.font.SysFont(None, 24)
+    
+    # Track statistics
+    step = 0
+    food_respawn_timer = 0
+    highest_generation = 1
+    stats_history = []  # Store stats over time
+    stat_collection_interval = 500  # Collect stats every 500 steps
+    
+    # Initialize flags and controls
+    running = True
+    paused = False
+    
+    while running:
+        # Process events
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    # Toggle fast mode
+                    global FAST_MODE
+                    FAST_MODE = not FAST_MODE
+                    print(f"Fast mode: {FAST_MODE}")
+                elif event.key == pygame.K_p:
+                    # Toggle pause
+                    paused = not paused
+                    print(f"Paused: {paused}")
+        
+        # Skip simulation if paused
+        if paused:
+            # Still render but don't update
+            draw_simulation(screen, population, foods, obstacles, step, font)
+            clock.tick(FPS // 4)  # Slow down while paused
+            continue
+            
+        # Update step counter
+        step += 1
+        
+        # Update organisms
+        alive_count = 0
+        for organism in population[:]:  # Create a copy of the list for safe iteration
+            if organism.alive:
+                organism.update(foods, obstacles, population)
+                alive_count += 1
+            elif organism.time_of_death and time.time() - organism.time_of_death > CORPSE_DECAY_TIME / FPS:
+                # Remove completely decayed corpses
+                population.remove(organism)
+        
+        # Update food and obstacles
+        for food in foods:
+            food.update()
+            
+        for obstacle in obstacles:
+            obstacle.update()
+        
+        # Regenerate food occasionally
+        food_respawn_timer += 1
+        active_food_count = sum(1 for food in foods if food.active)
+        
+        # Ensure there's always at least a minimum amount of food
+        if active_food_count < FOOD_COUNT * 0.2 or random.random() < FOOD_RESPAWN_RATE:
+            # Find an inactive food to reactivate, or create a new one if all are active
+            inactive_foods = [f for f in foods if not f.active]
+            if inactive_foods:
+                food = random.choice(inactive_foods)
+                food.position = (
+                    random.randint(50, WINDOW_WIDTH - 50),
+                    random.randint(50, WINDOW_HEIGHT - 50)
+                )
+                food.active = True
+                food.energy = 100
+                food.age = 0
+            else:
+                # All food is active, potentially add a new one if we're below limit
+                if len(foods) < FOOD_COUNT * 2:
+                    foods.append(Food())
+        
+        # Track statistics
+        if step % stat_collection_interval == 0:
+            if population:
+                avg_generation = sum(o.generation for o in population) / len(population)
+                max_generation = max(o.generation for o in population)
+                highest_generation = max(highest_generation, max_generation)
+                
+                stats = {
+                    'step': step,
+                    'population': len(population),
+                    'alive_count': alive_count,
+                    'food_count': active_food_count,
+                    'avg_generation': avg_generation,
+                    'max_generation': max_generation
+                }
+                stats_history.append(stats)
+                
+                # Keep only last 1000 stat points to prevent memory bloat
+                if len(stats_history) > 1000:
+                    stats_history.pop(0)
+        
+        # Draw everything
+        draw_simulation(screen, population, foods, obstacles, step, font)
+        
+        # Maintain framerate
+        clock.tick(FPS * (3 if FAST_MODE else 1))
+    
+    return stats_history
+
+def draw_simulation(screen, population, foods, obstacles, step, font):
+    # Only draw every few steps in fast mode to improve performance
+    if FAST_MODE and step % 3 != 0:
+        return
+        
+    # Clear screen
+    screen.fill(WHITE)
+    
+    # Draw obstacles and food
+    for obstacle in obstacles:
+        obstacle.draw(screen)
+        
+    for food in foods:
+        food.draw(screen)
+        
+    # Draw organisms
+    alive_organisms = [o for o in population if o.alive]
+    dead_organisms = [o for o in population if not o.alive]
+    
+    # Draw dead organisms first (so alive ones appear on top)
+    for organism in dead_organisms:
+        organism.draw(screen)
+        
+    # Then draw alive ones
+    for organism in alive_organisms:
+        organism.draw(screen)
+    
+    # Calculate statistics
+    alive_count = len(alive_organisms)
+    total_count = len(population)
+    active_food = sum(1 for food in foods if food.active)
+    
+    max_gen = max((o.generation for o in population), default=1)
+    avg_gen = sum(o.generation for o in population) / max(1, len(population))
+    
+    # Display statistics
+    stats_text = [
+        f"Step: {step} | Population: {alive_count}/{total_count} | Food: {active_food}/{len(foods)}",
+        f"Generations: Avg {avg_gen:.1f} | Max {max_gen}",
+        f"{'FAST MODE' if FAST_MODE else 'DETAILED MODE'} - Press SPACE to toggle | Press P to pause"
+    ]
+    
+    for i, text in enumerate(stats_text):
+        text_surface = font.render(text, True, BLACK)
+        screen.blit(text_surface, (10, 10 + i * 25))
+    
+    # Update display
+    pygame.display.flip()
+
 def main():
     # Initialize pygame
     pygame.init()
     screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-    pygame.display.set_caption("Organism Evolution")
+    pygame.display.set_caption("Persistent Organism Evolution")
     
-    # Initialize font
-    font = pygame.font.SysFont(None, 24)
+    # Run the continuous simulation
+    stats = simulate_continuous_evolution(screen)
     
-    # Create initial population
-    population = [Organism() for _ in range(POPULATION_SIZE)]
-    
-    # Track stats across generations
-    generation_stats = []
-    
-    # Main evolution loop
-    running = True
-    generation = 0
-    
-    while running and generation < GENERATIONS:
-        # Display generation info
+    # When simulation ends, show final stats graph if we have enough data
+    if len(stats) > 1:
+        # Display final stats graph
         screen.fill(WHITE)
-        gen_text = f"Generation {generation + 1} / {GENERATIONS}"
-        text_surface = font.render(gen_text, True, BLACK)
-        screen.blit(text_surface, (WINDOW_WIDTH // 2 - text_surface.get_width() // 2, WINDOW_HEIGHT // 2))
-        pygame.display.flip()
-        pygame.time.wait(1000)  # Pause between generations
+        font = pygame.font.SysFont(None, 24)
         
-        # Run simulation for current generation
-        stats = simulate_generation(population, screen)
-        generation_stats.append(stats)
-        
-        # Display end of generation stats
-        screen.fill(WHITE)
-        stats_text = [
-            f"Generation {generation + 1} Complete",
-            f"Best Score: {stats['best_score']}",
-            f"Average Score: {stats['avg_score']:.2f}",
-            f"Organisms Alive: {stats['alive_count']}/{POPULATION_SIZE}"
-        ]
-        
-        for i, text in enumerate(stats_text):
-            text_surface = font.render(text, True, BLACK)
-            screen.blit(text_surface, (WINDOW_WIDTH // 2 - text_surface.get_width() // 2, 
-                                     WINDOW_HEIGHT // 2 - 50 + i * 30))
-        
-        pygame.display.flip()
-        pygame.time.wait(2000)  # Show stats for 2 seconds
-        
-        # Process events during pause
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-                break
-                
-        # Evolve population for next generation
-        if running:
-            population = evolve_population(population)
-            generation += 1
-    
-    # Final stats display
-    if generation_stats:
-        screen.fill(WHITE)
-        
-        # Create a line graph of performance over generations
+        # Create a line graph of performance over time
         graph_width = 700
         graph_height = 400
         graph_margin = 50
@@ -606,31 +886,35 @@ def main():
                        (graph_margin, graph_margin + graph_height),
                        (graph_margin, graph_margin), 2)
                       
-        # Find max value for scaling
-        max_score = max(max(s['best_score'] for s in generation_stats), 0.001)
+        # Find max values for scaling
+        max_population = max(s['population'] for s in stats)
+        max_generation = max(s['max_generation'] for s in stats)
+        max_steps = stats[-1]['step']
         
-        # Draw data points and lines
-        best_points = []
-        avg_points = []
+        # Draw data points and lines for population and generation
+        pop_points = []
+        gen_points = []
         
-        for i, stats in enumerate(generation_stats):
-            x = graph_margin + i * graph_width / len(generation_stats)
+        for i, stat in enumerate(stats):
+            x = graph_margin + (stat['step'] / max_steps) * graph_width
             
-            best_y = graph_margin + graph_height - (stats['best_score'] / max_score * graph_height)
-            avg_y = graph_margin + graph_height - (stats['avg_score'] / max_score * graph_height)
+            # Population (blue)
+            pop_y = graph_margin + graph_height - (stat['population'] / max_population * graph_height * 0.8)
+            pop_points.append((x, pop_y))
             
-            best_points.append((x, best_y))
-            avg_points.append((x, avg_y))
+            # Maximum generation (red)
+            gen_y = graph_margin + graph_height - (stat['max_generation'] / max_generation * graph_height * 0.8)
+            gen_points.append((x, gen_y))
             
         # Draw lines connecting points
-        if len(best_points) > 1:
-            pygame.draw.lines(screen, (255, 0, 0), False, best_points, 2)
-            pygame.draw.lines(screen, (0, 0, 255), False, avg_points, 2)
+        if len(pop_points) > 1:
+            pygame.draw.lines(screen, (0, 0, 255), False, pop_points, 2)
+            pygame.draw.lines(screen, (255, 0, 0), False, gen_points, 2)
             
         # Draw axis labels
         title = font.render("Evolution Progress", True, BLACK)
-        x_label = font.render("Generation", True, BLACK)
-        y_label = font.render("Score", True, BLACK)
+        x_label = font.render("Simulation Steps", True, BLACK)
+        y_label = font.render("Value", True, BLACK)
         
         screen.blit(title, (WINDOW_WIDTH // 2 - title.get_width() // 2, 10))
         screen.blit(x_label, (WINDOW_WIDTH // 2 - x_label.get_width() // 2, 
@@ -647,11 +931,11 @@ def main():
         pygame.draw.line(screen, (0, 0, 255), (graph_margin + graph_width + 10, graph_margin + 50),
                        (graph_margin + graph_width + 40, graph_margin + 50), 2)
                        
-        best_label = font.render("Best Score", True, BLACK)
-        avg_label = font.render("Average Score", True, BLACK)
+        gen_label = font.render("Max Generation", True, BLACK)
+        pop_label = font.render("Population", True, BLACK)
         
-        screen.blit(best_label, (graph_margin + graph_width + 50, graph_margin + 10))
-        screen.blit(avg_label, (graph_margin + graph_width + 50, graph_margin + 40))
+        screen.blit(gen_label, (graph_margin + graph_width + 50, graph_margin + 10))
+        screen.blit(pop_label, (graph_margin + graph_width + 50, graph_margin + 40))
         
         pygame.display.flip()
         
