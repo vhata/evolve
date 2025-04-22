@@ -23,6 +23,8 @@ OBSTACLE_SPEED = 1.0  # Speed at which obstacles move
 CORPSE_DECAY_TIME = 500  # How long dead organisms stay visible
 CORPSE_TO_FOOD_TIME = 350  # How long until a corpse becomes food
 OBSTACLE_EROSION_AMOUNT = 2  # How much obstacles shrink when hit
+POOP_CHANCE = 0.1  # Chance to create a small obstacle after eating
+POOP_SIZE_RANGE = (5, 10)  # Size range for poop obstacles
 
 # Colors
 WHITE = (255, 255, 255)
@@ -73,18 +75,32 @@ class Food:
                           (self.position[0] + 3, self.position[1] - radius - 3), 2)
 
 class Obstacle:
-    def __init__(self):
-        self.position = (
-            random.randint(50, WINDOW_WIDTH - 50),
-            random.randint(50, WINDOW_HEIGHT - 50)
-        )
-        self.radius = random.randint(20, 40)
+    def __init__(self, position=None, poop=False):
+        # Position can be specified (for poop obstacles)
+        if position:
+            self.position = position
+        else:
+            self.position = (
+                random.randint(50, WINDOW_WIDTH - 50),
+                random.randint(50, WINDOW_HEIGHT - 50)
+            )
+            
+        # Size depends on type (poop or regular)
+        if poop:
+            self.radius = random.randint(POOP_SIZE_RANGE[0], POOP_SIZE_RANGE[1])
+            self.stationary = True  # Poop doesn't move initially
+            self.is_poop = True  # Mark as poop for visual difference
+        else:
+            self.radius = random.randint(20, 40)
+            self.stationary = random.random() < 0.6  # 60% chance to be stationary
+            self.is_poop = False
+            
         self.direction = random.uniform(0, 2 * math.pi)
         self.speed = 0 
-        self.stationary = random.random() < 0.6  # 60% chance to be stationary
         self.initial_radius = self.radius  # Track original size for visual effects
         self.eroded = False  # Track if obstacle has been eroded
-        self.min_radius = 8  # Minimum size before disappearing
+        self.min_radius = 5 if poop else 8  # Minimum size before disappearing
+        self.age = 0  # Track age for poop objects (for color change)
         
     def erode(self):
         # Reduce size when hit
@@ -99,6 +115,20 @@ class Obstacle:
         return self.radius <= self.min_radius
         
     def update(self):
+        # Age the obstacle (affects poop appearance)
+        self.age += 1
+        
+        # Special behavior for poop obstacles
+        if self.is_poop:
+            # Poop has a chance to start moving after it's been around for a while
+            if self.stationary and self.age > 100 and random.random() < OBSTACLE_MOVE_CHANCE * 2:
+                self.stationary = False
+                self.speed = OBSTACLE_SPEED * 0.5  # Slower than regular obstacles
+                
+            # Poop gradually hardens/dries out, becoming more like a regular obstacle
+            if self.age > 300 and random.random() < 0.01:
+                self.is_poop = False
+                
         # Occasionally change direction or start/stop moving
         if random.random() < OBSTACLE_MOVE_CHANCE:
             if self.stationary:
@@ -141,31 +171,63 @@ class Obstacle:
         if self.radius <= self.min_radius:
             return
             
-        # Draw obstacle as a rock with texture
-        rock_color = BROWN
-        
-        # If eroded, make color slightly different
-        if self.eroded:
-            # More grey as it erodes
-            erosion_factor = (self.initial_radius - self.radius) / (self.initial_radius - self.min_radius)
+        # Determine color based on type and state
+        if self.is_poop:
+            # Poop starts brown and gradually darkens/hardens
+            age_factor = min(1.0, self.age / 300)
+            
+            # Fresh poop is more brown, older is darker
             rock_color = (
-                min(255, BROWN[0] + int(50 * erosion_factor)),
-                min(255, BROWN[1] + int(50 * erosion_factor)),
-                min(255, BROWN[2] + int(50 * erosion_factor))
+                max(60, min(139, int(139 - 50 * age_factor))),  # R
+                max(30, min(69, int(69 - 20 * age_factor))),     # G 
+                max(10, min(19, int(19 - 5 * age_factor)))       # B
             )
+        else:
+            # Regular obstacle
+            rock_color = BROWN
+            
+            # If eroded, make color slightly different
+            if self.eroded:
+                # More grey as it erodes
+                erosion_factor = (self.initial_radius - self.radius) / (self.initial_radius - self.min_radius)
+                rock_color = (
+                    min(255, BROWN[0] + int(50 * erosion_factor)),
+                    min(255, BROWN[1] + int(50 * erosion_factor)),
+                    min(255, BROWN[2] + int(50 * erosion_factor))
+                )
         
+        # Draw the main obstacle shape
         pygame.draw.circle(surface, rock_color, (int(self.position[0]), int(self.position[1])), self.radius)
         
-        # Add darker shading on one side
-        pygame.draw.arc(surface, GRAY, 
-                      (int(self.position[0] - self.radius), int(self.position[1] - self.radius),
-                       self.radius * 2, self.radius * 2),
-                      math.pi/4, math.pi, max(2, self.radius//2))
+        # Different textures based on type
+        if self.is_poop:
+            # Poop has a more irregular texture (small bumps)
+            for i in range(min(6, int(self.radius/2))):
+                angle = i * math.pi * 2 / min(6, int(self.radius/2))
+                bump_dist = self.radius * 0.7
+                bump_x = self.position[0] + math.cos(angle) * bump_dist
+                bump_y = self.position[1] + math.sin(angle) * bump_dist
+                bump_size = max(1, int(self.radius * 0.25))
+                
+                # Make bumps slightly darker
+                bump_color = (
+                    max(20, rock_color[0] - 20),
+                    max(10, rock_color[1] - 10),
+                    max(5, rock_color[2] - 5)
+                )
+                pygame.draw.circle(surface, bump_color, (int(bump_x), int(bump_y)), bump_size)
+        else:
+            # Regular obstacle has rock-like shading
+            pygame.draw.arc(surface, GRAY, 
+                          (int(self.position[0] - self.radius), int(self.position[1] - self.radius),
+                           self.radius * 2, self.radius * 2),
+                          math.pi/4, math.pi, max(2, self.radius//2))
                       
         # Add cracks if eroded
         if self.eroded:
             # Draw some random cracks
             crack_start = self.position
+            erosion_factor = (self.initial_radius - self.radius) / (self.initial_radius - self.min_radius)
             for _ in range(min(5, int(erosion_factor * 10))):
                 crack_length = random.uniform(0.3, 0.9) * self.radius
                 crack_angle = random.uniform(0, 2 * math.pi)
@@ -181,7 +243,9 @@ class Obstacle:
         if not self.stationary:
             indicator_x = self.position[0] + math.cos(self.direction) * (self.radius * 0.7)
             indicator_y = self.position[1] + math.sin(self.direction) * (self.radius * 0.7)
-            pygame.draw.circle(surface, (200, 100, 50), (int(indicator_x), int(indicator_y)), 3)
+            indicator_color = (200, 100, 50) if not self.is_poop else (160, 80, 40)
+            pygame.draw.circle(surface, indicator_color, (int(indicator_x), int(indicator_y)), 
+                             max(2, min(3, int(self.radius / 4))))
         
     def collides_with(self, x, y, radius):
         dx = self.position[0] - x
@@ -407,6 +471,19 @@ class Organism:
                     self.energy += food.energy
                     self.food_eaten += 1
                     food.active = False
+                    
+                    # Chance to produce poop after eating
+                    if random.random() < POOP_CHANCE:
+                        # Create a small obstacle (poop) behind the organism
+                        behind_angle = self.direction + math.pi  # Opposite direction
+                        poop_distance = self.radius * 1.5
+                        poop_pos = (
+                            self.position[0] + math.cos(behind_angle) * poop_distance,
+                            self.position[1] + math.sin(behind_angle) * poop_distance
+                        )
+                        
+                        # Add the new poop to obstacles list
+                        obstacles.append(Obstacle(position=poop_pos, poop=True))
         
         # Consume energy (metabolism)
         self.energy -= self.genome['metabolism'] * (1 + self.speed)
@@ -970,10 +1047,13 @@ def draw_simulation(screen, population, foods, obstacles, step, font):
     max_gen = max((o.generation for o in population), default=1)
     avg_gen = sum(o.generation for o in population) / max(1, len(population))
     
+    # Count poop obstacles for stats
+    poop_count = sum(1 for o in obstacles if o.is_poop)
+    
     # Display statistics
     stats_text = [
         f"Step: {step} | Population: {alive_count}/{total_count} | Food: {active_food}/{len(foods)}",
-        f"Generations: Avg {avg_gen:.1f} | Max {max_gen} | Obstacles: {len(obstacles)}",
+        f"Generations: Avg {avg_gen:.1f} | Max {max_gen} | Obstacles: {len(obstacles) - poop_count}/{poop_count}",
         f"{'FAST MODE' if FAST_MODE else 'DETAILED MODE'} - Press SPACE to toggle | Press P to pause"
     ]
     
