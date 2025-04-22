@@ -9,8 +9,9 @@ WINDOW_WIDTH = 800
 WINDOW_HEIGHT = 800
 POPULATION_SIZE = 50
 GENERATIONS = 500
-FPS = 60
-SIMULATION_STEPS = 1000  # Steps per generation
+FPS = 120  # Increased from 60 to 120 for faster simulation
+SIMULATION_STEPS = 500  # Reduced from 1000 to 500 steps per generation
+FAST_MODE = True  # Toggle to run simulation faster with minimal visuals
 MUTATION_RATE = 0.1
 LARGE_MUTATION_PROBABILITY = 0.05
 FOOD_COUNT = 20
@@ -450,6 +451,12 @@ def simulate_generation(population, screen):
             if event.type == pygame.QUIT:
                 pygame.quit()
                 return
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    # Toggle fast mode with spacebar
+                    global FAST_MODE
+                    FAST_MODE = not FAST_MODE
+                    print(f"Fast mode: {FAST_MODE}")
         
         # Update organisms
         for organism in population:
@@ -462,38 +469,53 @@ def simulate_generation(population, screen):
         # End early if all organisms die or all food is eaten
         if alive_count == 0 or food_count == 0:
             break
+        
+        # In fast mode, only draw every 5 steps
+        if not FAST_MODE or step % 5 == 0:
+            # Draw everything
+            screen.fill(WHITE)
             
-        # Draw everything
-        screen.fill(WHITE)
-        
-        # Draw obstacles and food
-        for obstacle in obstacles:
-            obstacle.draw(screen)
-        for food in foods:
-            food.draw(screen)
+            # Draw obstacles and food
+            for obstacle in obstacles:
+                obstacle.draw(screen)
+            for food in foods:
+                food.draw(screen)
+                
+            # Draw organisms - in fast mode, simplify the drawing
+            for organism in population:
+                if FAST_MODE:
+                    # Simplified drawing for fast mode
+                    if organism.alive:
+                        pygame.draw.circle(surface=screen, 
+                                         color=BLUE, 
+                                         center=(int(organism.position[0]), int(organism.position[1])), 
+                                         radius=organism.radius)
+                else:
+                    organism.draw(screen)
+                
+            # Display statistics
+            current_avg = sum(o.food_eaten for o in population) / len(population)
+            current_best = max(o.food_eaten for o in population)
+            best_score = max(best_score, current_best)
+            avg_score = current_avg
             
-        # Draw organisms
-        for organism in population:
-            organism.draw(screen)
+            status_text = f"Step: {step}/{SIMULATION_STEPS} | Alive: {alive_count}/{POPULATION_SIZE} | Food: {food_count}/{FOOD_COUNT}"
+            score_text = f"Avg Food: {avg_score:.2f} | Best Food: {best_score}"
+            mode_text = f"{'FAST MODE' if FAST_MODE else 'DETAILED MODE'} - Press SPACE to toggle"
             
-        # Display statistics
-        current_avg = sum(o.food_eaten for o in population) / len(population)
-        current_best = max(o.food_eaten for o in population)
-        best_score = max(best_score, current_best)
-        avg_score = current_avg
-        
-        status_text = f"Step: {step}/{SIMULATION_STEPS} | Alive: {alive_count}/{POPULATION_SIZE} | Food: {food_count}/{FOOD_COUNT}"
-        score_text = f"Avg Food: {avg_score:.2f} | Best Food: {best_score}"
-        
-        status_surface = font.render(status_text, True, BLACK)
-        score_surface = font.render(score_text, True, BLACK)
-        
-        screen.blit(status_surface, (10, 10))
-        screen.blit(score_surface, (10, 40))
-        
-        # Update display
-        pygame.display.flip()
-        clock.tick(FPS)
+            status_surface = font.render(status_text, True, BLACK)
+            score_surface = font.render(score_text, True, BLACK)
+            mode_surface = font.render(mode_text, True, RED if FAST_MODE else GREEN)
+            
+            screen.blit(status_surface, (10, 10))
+            screen.blit(score_surface, (10, 40))
+            screen.blit(mode_surface, (10, 70))
+            
+            # Update display
+            pygame.display.flip()
+            
+        # Maintain framerate - faster in fast mode
+        clock.tick(FPS * (2 if FAST_MODE else 1))
     
     # End of generation - calculate and return statistics
     return {
