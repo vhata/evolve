@@ -252,11 +252,18 @@ class Organism:
             self.alive = False
             
     def draw(self, surface):
+        x, y = int(self.position[0]), int(self.position[1])
+        
         if not self.alive:
+            # Draw dead organism as a gray "X"
+            size = int(self.radius * 0.8)
+            pygame.draw.line(surface, (100, 100, 100), 
+                           (x - size, y - size), (x + size, y + size), 2)
+            pygame.draw.line(surface, (100, 100, 100), 
+                           (x + size, y - size), (x - size, y + size), 2)
             return
             
         # Draw body as a small creature with eyes
-        x, y = int(self.position[0]), int(self.position[1])
         
         # Main body (blue oval)
         pygame.draw.ellipse(surface, BLUE, 
