@@ -20,10 +20,11 @@ OBSTACLE_COUNT = 10
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 RED = (255, 0, 0)
-GREEN = (0, 255, 0)
-BLUE = (0, 0, 255)
+GREEN = (0, 200, 0)  # Darker green for food
+BLUE = (50, 100, 255)  # Lighter blue for organisms
 YELLOW = (255, 255, 0)
-GRAY = (100, 100, 100)
+GRAY = (80, 80, 80)  # Darker gray for obstacles
+BROWN = (139, 69, 19)  # Brown for obstacles
 
 class Food:
     def __init__(self):
@@ -37,7 +38,12 @@ class Food:
         
     def draw(self, surface):
         if self.active:
+            # Draw food as a bright green apple-like shape
             pygame.draw.circle(surface, GREEN, self.position, self.radius)
+            # Add a small stem
+            pygame.draw.line(surface, BROWN, 
+                          (self.position[0], self.position[1] - self.radius),
+                          (self.position[0] + 3, self.position[1] - self.radius - 3), 2)
 
 class Obstacle:
     def __init__(self):
@@ -48,7 +54,13 @@ class Obstacle:
         self.radius = random.randint(20, 40)
         
     def draw(self, surface):
-        pygame.draw.circle(surface, GRAY, self.position, self.radius)
+        # Draw obstacle as a rock with texture
+        pygame.draw.circle(surface, BROWN, self.position, self.radius)
+        # Add darker shading on one side
+        pygame.draw.arc(surface, GRAY, 
+                      (self.position[0] - self.radius, self.position[1] - self.radius,
+                       self.radius * 2, self.radius * 2),
+                      math.pi/4, math.pi, self.radius//2)
         
     def collides_with(self, x, y, radius):
         dx = self.position[0] - x
@@ -243,30 +255,90 @@ class Organism:
         if not self.alive:
             return
             
-        # Draw body
-        pygame.draw.circle(surface, BLUE, (int(self.position[0]), int(self.position[1])), self.radius)
+        # Draw body as a small creature with eyes
+        x, y = int(self.position[0]), int(self.position[1])
         
-        # Draw direction indicator
-        end_x = self.position[0] + math.cos(self.direction) * self.radius
-        end_y = self.position[1] + math.sin(self.direction) * self.radius
-        pygame.draw.line(surface, BLACK, self.position, (end_x, end_y), 2)
+        # Main body (blue oval)
+        pygame.draw.ellipse(surface, BLUE, 
+                          (x - self.radius, y - self.radius*0.8, 
+                           self.radius*2, self.radius*1.6))
         
-        # Optional: Draw vision field
-        if False:  # Toggle for debugging
+        # Direction as a small head/protrusion
+        head_x = x + math.cos(self.direction) * self.radius * 0.8
+        head_y = y + math.sin(self.direction) * self.radius * 0.8
+        pygame.draw.circle(surface, BLUE, (int(head_x), int(head_y)), int(self.radius * 0.5))
+        
+        # Eyes (two small white circles with black pupils)
+        eye_offset = 0.4
+        left_eye_angle = self.direction + math.pi/4
+        right_eye_angle = self.direction - math.pi/4
+        
+        left_eye_x = head_x + math.cos(left_eye_angle) * self.radius * eye_offset
+        left_eye_y = head_y + math.sin(left_eye_angle) * self.radius * eye_offset
+        right_eye_x = head_x + math.cos(right_eye_angle) * self.radius * eye_offset
+        right_eye_y = head_y + math.sin(right_eye_angle) * self.radius * eye_offset
+        
+        # White part of eyes
+        pygame.draw.circle(surface, WHITE, (int(left_eye_x), int(left_eye_y)), int(self.radius * 0.2))
+        pygame.draw.circle(surface, WHITE, (int(right_eye_x), int(right_eye_y)), int(self.radius * 0.2))
+        
+        # Pupils (small black dots)
+        pygame.draw.circle(surface, BLACK, (int(left_eye_x), int(left_eye_y)), int(self.radius * 0.1))
+        pygame.draw.circle(surface, BLACK, (int(right_eye_x), int(right_eye_y)), int(self.radius * 0.1))
+        
+        # Draw vision field - makes it easier to understand organism behavior
+        if True:  # Set to False to hide vision field
             vision_range = self.genome['vision_range']
             field_of_view = self.genome['field_of_view']
             start_angle = self.direction - field_of_view / 2
             end_angle = self.direction + field_of_view / 2
             
-            pygame.draw.arc(surface, (200, 200, 50, 50),  # Semi-transparent yellow
-                          (self.position[0] - vision_range, self.position[1] - vision_range,
-                           vision_range * 2, vision_range * 2),
-                          start_angle, end_angle, 1)
+            # Create a transparent surface for the vision cone
+            vision_surf = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+            
+            # Convert floating point values to integers for the rectangle
+            rect_x = int(self.position[0] - vision_range)
+            rect_y = int(self.position[1] - vision_range)
+            rect_width = int(vision_range * 2)
+            rect_height = int(vision_range * 2)
+            
+            # Draw a transparent triangle instead of an arc (simpler)
+            edge1_x = self.position[0] + math.cos(start_angle) * vision_range
+            edge1_y = self.position[1] + math.sin(start_angle) * vision_range
+            edge2_x = self.position[0] + math.cos(end_angle) * vision_range
+            edge2_y = self.position[1] + math.sin(end_angle) * vision_range
+            
+            # Create a triangle for the vision cone
+            vision_points = [
+                self.position,
+                (int(edge1_x), int(edge1_y)),
+                (int(edge2_x), int(edge2_y))
+            ]
+            pygame.draw.polygon(vision_surf, (255, 255, 0, 30), vision_points)
+            
+            # Draw the edges of the vision cone
+            pygame.draw.line(vision_surf, (255, 255, 0, 60), 
+                           (int(self.position[0]), int(self.position[1])), 
+                           (int(edge1_x), int(edge1_y)), 2)
+            pygame.draw.line(vision_surf, (255, 255, 0, 60), 
+                           (int(self.position[0]), int(self.position[1])), 
+                           (int(edge2_x), int(edge2_y)), 2)
+            
+            surface.blit(vision_surf, (0, 0))
         
         # Draw energy bar
         bar_width = 20
         bar_height = 5
         energy_percentage = self.energy / 1000  # Assuming 1000 is max energy
+        
+        # Background for energy bar (gray)
+        pygame.draw.rect(surface, GRAY, 
+                       (self.position[0] - bar_width/2, 
+                        self.position[1] - self.radius - 10,
+                        bar_width,
+                        bar_height))
+                        
+        # Actual energy level (red)
         pygame.draw.rect(surface, RED, 
                        (self.position[0] - bar_width/2, 
                         self.position[1] - self.radius - 10,
