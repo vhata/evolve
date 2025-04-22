@@ -9,7 +9,9 @@ from enum import Enum
 WINDOW_SIZE = 800
 POPULATION_SIZE = 50
 GENERATIONS = 5000
-MUTATION_RATE = 0.1
+MUTATION_RATE = 0.1  # Probability of small mutation per point
+LARGE_MUTATION_PROBABILITY = 0.05 # Probability of large mutation per point
+LARGE_MUTATION_MAGNITUDE = 80 # Max change for large mutation
 SHAPE_POINTS = 80  # Number of points in our evolving shape
 TARGET_RADIUS = 150 # General radius for target shapes
 
@@ -42,14 +44,32 @@ class Shape:
 
     def mutate(self):
         mutated_points = []
-        for point in self.points:
-            if random.random() < MUTATION_RATE:
-                # Add some random variation to the point, clamped to window bounds
-                new_x = max(-WINDOW_SIZE//2 + 50, min(WINDOW_SIZE//2 - 50, point[0] + random.randint(-20, 20)))
-                new_y = max(-WINDOW_SIZE//2 + 50, min(WINDOW_SIZE//2 - 50, point[1] + random.randint(-20, 20)))
-                mutated_points.append((new_x, new_y))
-            else:
-                mutated_points.append(point)
+        for x, y in self.points: # Unpack points directly
+            change_x, change_y = 0, 0 # Default to no change
+
+            # Determine mutation type and magnitude
+            rand_val = random.random()
+            if rand_val < LARGE_MUTATION_PROBABILITY:
+                # Large mutation
+                change_x = random.randint(-LARGE_MUTATION_MAGNITUDE, LARGE_MUTATION_MAGNITUDE)
+                change_y = random.randint(-LARGE_MUTATION_MAGNITUDE, LARGE_MUTATION_MAGNITUDE)
+            elif rand_val < LARGE_MUTATION_PROBABILITY + MUTATION_RATE: # Check combined probability
+                # Small mutation (occurs if not large, but within MUTATION_RATE range)
+                change_x = random.randint(-20, 20)
+                change_y = random.randint(-20, 20)
+            # else: No mutation, change_x/y remain 0
+
+            # Apply the calculated change
+            new_x = x + change_x
+            new_y = y + change_y
+
+            # Clamp the final point to window bounds once
+            bound = WINDOW_SIZE // 2 - 50 # Boundary margin
+            new_x = max(-bound, min(bound, new_x))
+            new_y = max(-bound, min(bound, new_y))
+            
+            mutated_points.append((new_x, new_y))
+            
         return Shape(mutated_points)
 
     def draw(self, t: turtle.Turtle, color="black"):
