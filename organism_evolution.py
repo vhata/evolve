@@ -77,7 +77,7 @@ class Organism:
         )
         self.radius = 10
         self.direction = random.uniform(0, 2 * math.pi)
-        self.speed = 0
+        self.speed = 1.0  # Start with some speed instead of 0
         self.max_speed = 5
         self.energy = 500
         self.food_eaten = 0
@@ -87,19 +87,19 @@ class Organism:
         if genome is None:
             self.genome = {
                 # Sensors
-                'vision_range': random.uniform(50, 200),
-                'field_of_view': random.uniform(math.pi/4, math.pi),
+                'vision_range': random.uniform(80, 200),
+                'field_of_view': random.uniform(math.pi/3, math.pi),
                 'num_sensors': random.randint(3, 7),
                 
                 # Behavior
                 'turn_factor': random.uniform(0.1, 0.5),
-                'speed_factor': random.uniform(0.5, 2.0),
+                'speed_factor': random.uniform(0.8, 2.0),  # Increased minimum
                 'metabolism': random.uniform(0.1, 0.3),
                 
                 # Neural weights (simplified)
                 'food_attraction': random.uniform(0.5, 2.0),
                 'obstacle_avoidance': random.uniform(0.5, 2.0),
-                'exploration_drive': random.uniform(0.1, 1.0)
+                'exploration_drive': random.uniform(0.3, 1.0)  # Increased minimum
             }
         else:
             self.genome = genome
@@ -184,6 +184,10 @@ class Organism:
         # Random exploration factor
         turn_strength += (random.random() - 0.5) * self.genome['exploration_drive']
         
+        # Always have a minimum movement
+        if abs(speed_change) < 0.1:
+            speed_change = 0.5 * self.genome['exploration_drive']
+        
         return turn_strength, speed_change
         
     def update(self, foods, obstacles):
@@ -199,7 +203,9 @@ class Organism:
         # Apply the decision
         self.direction += turn * self.genome['turn_factor']
         self.speed += acceleration * self.genome['speed_factor'] * 0.1
-        self.speed = max(0, min(self.max_speed, self.speed))
+        
+        # Always maintain a minimum speed for exploration
+        self.speed = max(0.5, min(self.max_speed, self.speed))
         
         # Move the organism
         new_x = self.position[0] + math.cos(self.direction) * self.speed
