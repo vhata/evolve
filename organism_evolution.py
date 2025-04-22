@@ -28,15 +28,46 @@ POOP_SIZE_RANGE = (5, 10)  # Size range for poop obstacles
 SPECIES_SIMILARITY_THRESHOLD = 0.15  # Maximum genome difference for same species
 MAX_TRACKED_SPECIES = 6  # Maximum number of species to track and display
 
+# Food type constants
+class FoodType:
+    STANDARD = 0
+    RICH = 1
+    SUPERFOOD = 2
+    JUNK = 3
+
+# Food type probabilities (must sum to 1.0)
+FOOD_TYPE_PROBS = {
+    FoodType.STANDARD: 0.6,    # Common, average nutrition
+    FoodType.RICH: 0.25,       # Somewhat rare, high nutrition
+    FoodType.SUPERFOOD: 0.05,  # Very rare, extremely nutritious
+    FoodType.JUNK: 0.1         # Common but low nutrition
+}
+
 # Colors
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 RED = (255, 0, 0)
-GREEN = (0, 200, 0)  # Darker green for food
+GREEN = (0, 200, 0)  # Darker green for standard food
 BLUE = (50, 100, 255)  # Lighter blue for organisms
 YELLOW = (255, 255, 0)
 GRAY = (80, 80, 80)  # Darker gray for obstacles
 BROWN = (139, 69, 19)  # Brown for obstacles
+
+# Food colors by type
+FOOD_COLORS = {
+    FoodType.STANDARD: (0, 200, 0),       # Green
+    FoodType.RICH: (255, 215, 0),         # Gold
+    FoodType.SUPERFOOD: (148, 0, 211),    # Purple
+    FoodType.JUNK: (169, 169, 169)        # Light gray
+}
+
+# Food type names for display
+FOOD_TYPE_NAMES = {
+    FoodType.STANDARD: "Standard",
+    FoodType.RICH: "Rich",
+    FoodType.SUPERFOOD: "Super",
+    FoodType.JUNK: "Junk"
+}
 
 # Species colors - used to clearly distinguish different species
 SPECIES_COLORS = [
@@ -51,7 +82,7 @@ SPECIES_COLORS = [
 ]
 
 class Food:
-    def __init__(self, position=None):
+    def __init__(self, position=None, food_type=None):
         if position:
             self.position = position
         else:
@@ -59,31 +90,91 @@ class Food:
                 random.randint(50, WINDOW_WIDTH - 50),
                 random.randint(50, WINDOW_HEIGHT - 50)
             )
+        
+        # Assign random food type based on probabilities if not specified
+        if food_type is None:
+            # Use weighted random selection based on probabilities
+            r = random.random()
+            cumulative = 0
+            for food_type, prob in FOOD_TYPE_PROBS.items():
+                cumulative += prob
+                if r <= cumulative:
+                    self.food_type = food_type
+                    break
+            else:
+                # Fallback in case probabilities don't sum to 1.0
+                self.food_type = FoodType.STANDARD
+        else:
+            self.food_type = food_type
+            
+        # Set base properties according to food type
         self.radius = 5
-        self.energy = 100
         self.active = True
         self.age = 0
+        
+        # Set energy value based on food type
+        if self.food_type == FoodType.STANDARD:
+            self.energy = 100
+            self.max_energy = 200
+            self.growth_rate = 10  # Energy added every 50 frames
+        elif self.food_type == FoodType.RICH:
+            self.energy = 200
+            self.max_energy = 300
+            self.growth_rate = 15
+        elif self.food_type == FoodType.SUPERFOOD:
+            self.energy = 400
+            self.max_energy = 500
+            self.growth_rate = 20
+        elif self.food_type == FoodType.JUNK:
+            self.energy = 50
+            self.max_energy = 70
+            self.growth_rate = 5
         
     def update(self):
         # Food becomes more nutritious as it ages (simulating growth)
         if self.active and self.age < 300:  # Cap at 300 frames
             self.age += 1
-            if self.age % 50 == 0 and self.energy < 200:
-                self.energy += 10
+            if self.age % 50 == 0 and self.energy < self.max_energy:
+                self.energy += self.growth_rate
             
     def draw(self, surface):
         if self.active:
-            # Draw food as a bright green apple-like shape
-            # Bigger and darker green as it ages/becomes more nutritious
+            # Get base color from food type
+            base_color = FOOD_COLORS[self.food_type]
+            
+            # Adjust size based on age/ripeness
             size_factor = min(1.5, 1.0 + self.age/300)
             radius = int(self.radius * size_factor)
             
-            # Calculate color based on age (gets darker/riper)
-            green_val = max(100, 200 - self.age/3)
-            color = (0, green_val, 0)
+            # Calculate color shade based on age (gets more intense as it ripens)
+            ripeness = min(1.0, self.age / 200)
+            color = (
+                max(0, min(255, int(base_color[0] * (0.7 + 0.3 * ripeness)))),
+                max(0, min(255, int(base_color[1] * (0.7 + 0.3 * ripeness)))),
+                max(0, min(255, int(base_color[2] * (0.7 + 0.3 * ripeness))))
+            )
             
             pygame.draw.circle(surface, color, self.position, radius)
-            # Add a small stem
+            
+            # Add visual indicators for special food types
+            if self.food_type == FoodType.RICH or self.food_type == FoodType.SUPERFOOD:
+                # Add a glow effect (smaller circles around the main one)
+                glow_radius = radius + 2
+                glow_color = (color[0], color[1], color[2], 100)  # Semi-transparent
+                glow_surf = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+                pygame.draw.circle(glow_surf, glow_color, self.position, glow_radius)
+                surface.blit(glow_surf, (0, 0))
+                
+                # Add some sparkles for superfood
+                if self.food_type == FoodType.SUPERFOOD:
+                    for i in range(3):
+                        angle = random.uniform(0, 2 * math.pi)
+                        dist = radius * 0.8
+                        sparkle_x = self.position[0] + math.cos(angle) * dist
+                        sparkle_y = self.position[1] + math.sin(angle) * dist
+                        pygame.draw.circle(surface, WHITE, (int(sparkle_x), int(sparkle_y)), 1)
+            
+            # Add standard stem for all food types
             pygame.draw.line(surface, BROWN, 
                           (self.position[0], self.position[1] - radius),
                           (self.position[0] + 3, self.position[1] - radius - 3), 2)
@@ -295,6 +386,14 @@ class Organism:
         self.decompose_timer = 0  # Track decomposition progress
         self.generation = 1 if parent is None else parent.generation + 1  # Track organism generation
         
+        # Food preferences - track what this organism has eaten
+        self.food_type_eaten = {
+            FoodType.STANDARD: 0,
+            FoodType.RICH: 0,
+            FoodType.SUPERFOOD: 0,
+            FoodType.JUNK: 0
+        }
+        
         # Species identification
         self.parent_species_id = parent.species_id if parent else None
         self.species_id = None  # To be assigned after genome creation
@@ -324,6 +423,12 @@ class Organism:
                 'obstacle_avoidance': random.uniform(0.5, 2.0),
                 'exploration_drive': random.uniform(0.3, 1.0),
                 
+                # Food preferences (attraction to each food type)
+                'standard_food_pref': random.uniform(0.5, 1.5),
+                'rich_food_pref': random.uniform(0.5, 1.5),
+                'superfood_pref': random.uniform(0.5, 1.5),
+                'junk_food_pref': random.uniform(0.5, 1.5),
+                
                 # New traits for continuous evolution
                 'reproduction_threshold': random.uniform(700, 900),  # Energy needed to reproduce
                 'offspring_energy': random.uniform(0.2, 0.4),  # Percentage of energy to give to offspring
@@ -347,8 +452,9 @@ class Organism:
         field_of_view = self.genome['field_of_view']
         num_sensors = int(self.genome['num_sensors'])
         
-        # Initialize sensors (food, obstacle) for each angle
-        sensors = [(0, 0) for _ in range(num_sensors)]
+        # Initialize sensors with food signals by type and obstacle signal
+        # Format: (standard_food, rich_food, superfood, junk_food, obstacle)
+        sensors = [(0, 0, 0, 0, 0) for _ in range(num_sensors)]
         
         # Calculate sensor angles
         sensor_angles = []
@@ -362,14 +468,21 @@ class Organism:
             ray_x = self.position[0] + math.cos(angle) * vision_range
             ray_y = self.position[1] + math.sin(angle) * vision_range
             
+            # Initialize closest food distances for each type
+            closest_food_dist = {
+                FoodType.STANDARD: vision_range,
+                FoodType.RICH: vision_range,
+                FoodType.SUPERFOOD: vision_range,
+                FoodType.JUNK: vision_range
+            }
+            
             # Check for food along the ray
-            closest_food_dist = vision_range
             for food in foods:
                 if food.active:
                     food_dist = math.sqrt((food.position[0] - self.position[0])**2 + 
                                         (food.position[1] - self.position[1])**2)
                     
-                    if food_dist < closest_food_dist:
+                    if food_dist < closest_food_dist[food.food_type]:
                         # Check if food is in the direction of the ray
                         food_angle = math.atan2(food.position[1] - self.position[1], 
                                               food.position[0] - self.position[0])
@@ -377,8 +490,24 @@ class Organism:
                         angle_diff = min(angle_diff, 2 * math.pi - angle_diff)
                         
                         if angle_diff < field_of_view / num_sensors:
-                            closest_food_dist = food_dist
-                            sensors[i] = (1 - food_dist/vision_range, sensors[i][1])
+                            closest_food_dist[food.food_type] = food_dist
+                            
+                            # Update sensor value for this food type
+                            food_signal = 1 - food_dist/vision_range
+                            
+                            # Create updated sensor tuple with new value for detected food type
+                            sensor_values = list(sensors[i])
+                            if food.food_type == FoodType.STANDARD:
+                                sensor_values[0] = food_signal
+                            elif food.food_type == FoodType.RICH:
+                                sensor_values[1] = food_signal
+                            elif food.food_type == FoodType.SUPERFOOD:
+                                sensor_values[2] = food_signal
+                            elif food.food_type == FoodType.JUNK:
+                                sensor_values[3] = food_signal
+                            
+                            # Keep obstacle value the same
+                            sensors[i] = tuple(sensor_values)
             
             # Check for obstacles along the ray
             closest_obstacle_dist = vision_range
@@ -395,22 +524,43 @@ class Organism:
                     
                     if angle_diff < field_of_view / num_sensors:
                         closest_obstacle_dist = obstacle_dist
-                        sensors[i] = (sensors[i][0], 1 - obstacle_dist/vision_range)
+                        
+                        # Update obstacle value (in sensor index 4)
+                        sensor_values = list(sensors[i])
+                        sensor_values[4] = 1 - obstacle_dist/vision_range
+                        sensors[i] = tuple(sensor_values)
         
         return sensors
         
     def make_decision(self, sensors):
-        # Simple decision making based on sensor input
+        # Decision making based on sensor input with food type preferences
         turn_strength = 0
         speed_change = 0
         
         # Process each sensor
-        for i, (food_signal, obstacle_signal) in enumerate(sensors):
+        for i, (std_food_signal, rich_food_signal, superfood_signal, junk_food_signal, obstacle_signal) in enumerate(sensors):
             sensor_angle = -self.genome['field_of_view']/2 + i * self.genome['field_of_view']/(len(sensors)-1 if len(sensors) > 1 else 1)
             
-            # Food attraction
-            turn_strength += sensor_angle * food_signal * self.genome['food_attraction']
-            speed_change += food_signal * self.genome['food_attraction']
+            # Calculate food attraction with type preferences
+            # Standard food
+            food_strength = std_food_signal * self.genome['standard_food_pref']
+            turn_strength += sensor_angle * food_strength * self.genome['food_attraction']
+            speed_change += food_strength * self.genome['food_attraction']
+            
+            # Rich food (more nutritious)
+            food_strength = rich_food_signal * self.genome['rich_food_pref']
+            turn_strength += sensor_angle * food_strength * self.genome['food_attraction']
+            speed_change += food_strength * self.genome['food_attraction']
+            
+            # Superfood (extremely nutritious but rare)
+            food_strength = superfood_signal * self.genome['superfood_pref']
+            turn_strength += sensor_angle * food_strength * self.genome['food_attraction']
+            speed_change += food_strength * self.genome['food_attraction']
+            
+            # Junk food (less nutritious)
+            food_strength = junk_food_signal * self.genome['junk_food_pref']
+            turn_strength += sensor_angle * food_strength * self.genome['food_attraction']
+            speed_change += food_strength * self.genome['food_attraction']
             
             # Obstacle avoidance (steer away)
             turn_strength -= sensor_angle * obstacle_signal * self.genome['obstacle_avoidance']
@@ -495,8 +645,48 @@ class Organism:
                 distance = math.sqrt(dx*dx + dy*dy)
                 
                 if distance < (self.radius + food.radius):
+                    # Add energy from food
                     self.energy += food.energy
                     self.food_eaten += 1
+                    
+                    # Track which food type was eaten
+                    self.food_type_eaten[food.food_type] += 1
+                    
+                    # Display visual indicator of food type eaten
+                    if not FAST_MODE:
+                        # Create a small popup text effect showing what was eaten
+                        popup_font = pygame.font.SysFont(None, 16)
+                        
+                        # Determine text based on food type
+                        if food.food_type == FoodType.STANDARD:
+                            popup_text = "+100"
+                        elif food.food_type == FoodType.RICH:
+                            popup_text = "+200"
+                        elif food.food_type == FoodType.SUPERFOOD:
+                            popup_text = "+400!"
+                        elif food.food_type == FoodType.JUNK:
+                            popup_text = "+50"
+                            
+                        # Create the popup
+                        popup_color = FOOD_COLORS[food.food_type]
+                        popup_surf = popup_font.render(popup_text, True, popup_color)
+                        
+                        # Add the popup to a global list to be drawn and animated
+                        # We'll update this during the draw phase
+                        popup = {
+                            'text': popup_surf,
+                            'position': food.position,
+                            'lifetime': 30,  # Frames to show
+                            'color': popup_color,
+                            'y_offset': 0
+                        }
+                        
+                        # Store in a global list to be accessed during draw
+                        if not hasattr(Organism, 'food_popups'):
+                            Organism.food_popups = []
+                        Organism.food_popups.append(popup)
+                    
+                    # Mark food as consumed
                     food.active = False
                     
                     # Chance to produce poop after eating
@@ -550,6 +740,59 @@ class Organism:
             self.alive = False
             self.time_of_death = time.time()  # Record time of death for corpse decay
             
+    def draw_food_preferences(self, surface, x, y):
+        """Draw visual indicators of organism's food preferences."""
+        if FAST_MODE:
+            return  # Skip in fast mode
+            
+        # Only draw for living organisms
+        if not self.alive:
+            return
+            
+        # Create a small size bar graph showing preferences
+        bar_width = 4
+        bar_height = 25  # Maximum height
+        bar_spacing = 6  # Space between bars
+        
+        # Draw background bars (light gray)
+        bar_bg_height = 25
+        for i, food_type in enumerate([FoodType.STANDARD, FoodType.RICH, FoodType.SUPERFOOD, FoodType.JUNK]):
+            bar_x = x - (bar_width * 2 + bar_spacing * 1.5) + (i * (bar_width + bar_spacing))
+            bar_y = y - self.radius - 40
+            pygame.draw.rect(surface, (220, 220, 220), 
+                           (bar_x, bar_y, bar_width, bar_bg_height))
+        
+        # Draw preference bars
+        pref_values = [
+            self.genome['standard_food_pref'],
+            self.genome['rich_food_pref'],
+            self.genome['superfood_pref'],
+            self.genome['junk_food_pref']
+        ]
+        
+        # Normalize preference values for visualization
+        max_pref = max(pref_values)
+        
+        for i, (food_type, pref) in enumerate(zip(
+            [FoodType.STANDARD, FoodType.RICH, FoodType.SUPERFOOD, FoodType.JUNK], 
+            pref_values)):
+            
+            # Normalize height (capped at bar_height)
+            norm_height = int((pref / max(max_pref, 1.0)) * bar_height)
+            norm_height = min(bar_height, norm_height)
+            
+            bar_x = x - (bar_width * 2 + bar_spacing * 1.5) + (i * (bar_width + bar_spacing))
+            bar_y = y - self.radius - 40 + (bar_height - norm_height)
+            
+            # Use food colors for the bars
+            color = FOOD_COLORS[food_type]
+            pygame.draw.rect(surface, color, (bar_x, bar_y, bar_width, norm_height))
+            
+            # Add small color dot at bottom to identify food type
+            pygame.draw.circle(surface, color, 
+                             (int(bar_x + bar_width//2), int(y - self.radius - 12)), 
+                             2)
+    
     def draw(self, surface):
         x, y = int(self.position[0]), int(self.position[1])
         
@@ -718,6 +961,9 @@ class Organism:
                            (int(edge2_x), int(edge2_y)), 1)  # Thinner line
             
             surface.blit(vision_surf, (0, 0))
+            
+            # Draw food preference indicators
+            self.draw_food_preferences(surface, x, y)
         
         # Draw energy bar
         bar_width = 20
@@ -847,6 +1093,14 @@ class Organism:
         new_genome['turn_factor'] = max(0.05, min(1.0, new_genome['turn_factor']))
         new_genome['speed_factor'] = max(0.2, min(3.0, new_genome['speed_factor']))
         new_genome['metabolism'] = max(0.05, min(0.5, new_genome['metabolism']))
+        
+        # Food preferences - allow specialization but maintain reasonable ranges
+        new_genome['standard_food_pref'] = max(0.1, min(3.0, new_genome['standard_food_pref']))
+        new_genome['rich_food_pref'] = max(0.1, min(3.0, new_genome['rich_food_pref']))
+        new_genome['superfood_pref'] = max(0.1, min(3.0, new_genome['superfood_pref']))
+        new_genome['junk_food_pref'] = max(0.1, min(3.0, new_genome['junk_food_pref']))
+        
+        # Reproduction traits
         new_genome['reproduction_threshold'] = max(600, min(1200, new_genome['reproduction_threshold']))
         new_genome['offspring_energy'] = max(0.1, min(0.5, new_genome['offspring_energy']))
         new_genome['size_factor'] = max(0.6, min(1.5, new_genome['size_factor']))
@@ -857,14 +1111,29 @@ class Organism:
 
 def calculate_fitness(organism):
     # The fitness function considers:
-    # 1. How much food was eaten
+    # 1. How much food was eaten (with bonuses for high-energy food)
     # 2. How much energy remains
     # 3. How long the organism survived
+    # 4. Reproductive success
     
-    fitness = organism.food_eaten * 100  # Primary objective
+    # Base fitness from raw food count
+    base_fitness = organism.food_eaten * 50
     
+    # Add bonuses for nutritious food
+    # Standard food is already counted in base
+    food_bonus = (
+        organism.food_type_eaten[FoodType.RICH] * 75 +        # Bonus for rich food
+        organism.food_type_eaten[FoodType.SUPERFOOD] * 150 +  # Major bonus for superfood
+        organism.food_type_eaten[FoodType.JUNK] * 10          # Small bonus for junk food
+    )
+    
+    # Calculate overall fitness
+    fitness = base_fitness + food_bonus
+    
+    # Bonuses for living organisms
     if organism.alive:
         fitness += organism.energy * 0.1  # Bonus for remaining energy
+        fitness += organism.age * 0.01    # Small bonus for longevity
     
     return fitness
 
@@ -1024,6 +1293,36 @@ def update_species_statistics(population):
                 max_fitness = max(calculate_fitness(o) for o in organisms)
                 species_info['avg_fitness'] = avg_fitness
                 species_info['max_fitness'] = max(species_info['max_fitness'], max_fitness)
+                
+                # Calculate food preferences
+                avg_prefs = {
+                    'standard_food_pref': sum(o.genome['standard_food_pref'] for o in organisms) / len(organisms),
+                    'rich_food_pref': sum(o.genome['rich_food_pref'] for o in organisms) / len(organisms),
+                    'superfood_pref': sum(o.genome['superfood_pref'] for o in organisms) / len(organisms),
+                    'junk_food_pref': sum(o.genome['junk_food_pref'] for o in organisms) / len(organisms)
+                }
+                species_info['food_preferences'] = avg_prefs
+                
+                # Determine food specialization (if any)
+                # A species is specialized if one food preference is significantly higher than others
+                pref_values = list(avg_prefs.values())
+                max_pref = max(pref_values)
+                avg_other_prefs = sum(p for p in pref_values if p != max_pref) / 3  # Average of other preferences
+                
+                # If max preference is at least 50% higher than average of others, consider specialized
+                if max_pref > avg_other_prefs * 1.5:
+                    # Find which food type is specialized
+                    for food_type, pref_name in [
+                        (FoodType.STANDARD, 'standard_food_pref'),
+                        (FoodType.RICH, 'rich_food_pref'),
+                        (FoodType.SUPERFOOD, 'superfood_pref'),
+                        (FoodType.JUNK, 'junk_food_pref')
+                    ]:
+                        if avg_prefs[pref_name] == max_pref:
+                            species_info['specialized_food'] = food_type
+                            break
+                else:
+                    species_info['specialized_food'] = None  # Not specialized
     
     # Rank species by population count (could also use fitness)
     active_species = [(sid, info) for sid, info in Organism.species_registry.items() 
@@ -1035,9 +1334,14 @@ def update_species_statistics(population):
         Organism.species_registry[species_id]['rank'] = rank
 
 def simulate_continuous_evolution(screen):
-    # Setup environment
+    # Setup environment with initial population
     population = [Organism() for _ in range(POPULATION_SIZE)]
-    foods = [Food() for _ in range(FOOD_COUNT)]
+    
+    # Create initial food with different types based on probabilities
+    foods = []
+    for _ in range(FOOD_COUNT):
+        foods.append(Food())  # Food constructor handles random type assignment
+        
     obstacles = [Obstacle() for _ in range(OBSTACLE_COUNT)]
     
     # Initialize utilities
@@ -1070,6 +1374,55 @@ def simulate_continuous_evolution(screen):
                     # Toggle pause
                     paused = not paused
                     print(f"Paused: {paused}")
+                    
+                # Food type probability adjustments
+                elif event.key == pygame.K_1:
+                    # Increase standard food probability
+                    FOOD_TYPE_PROBS[FoodType.STANDARD] = min(0.9, FOOD_TYPE_PROBS[FoodType.STANDARD] + 0.1)
+                    # Normalize probabilities
+                    total = sum(FOOD_TYPE_PROBS.values())
+                    for food_type in FOOD_TYPE_PROBS:
+                        if food_type != FoodType.STANDARD:
+                            FOOD_TYPE_PROBS[food_type] *= (1.0 - FOOD_TYPE_PROBS[FoodType.STANDARD]) / (total - FOOD_TYPE_PROBS[FoodType.STANDARD])
+                    print(f"Food type probabilities: {FOOD_TYPE_PROBS}")
+                    
+                elif event.key == pygame.K_2:
+                    # Increase rich food probability
+                    FOOD_TYPE_PROBS[FoodType.RICH] = min(0.9, FOOD_TYPE_PROBS[FoodType.RICH] + 0.1)
+                    # Normalize probabilities
+                    total = sum(FOOD_TYPE_PROBS.values())
+                    for food_type in FOOD_TYPE_PROBS:
+                        if food_type != FoodType.RICH:
+                            FOOD_TYPE_PROBS[food_type] *= (1.0 - FOOD_TYPE_PROBS[FoodType.RICH]) / (total - FOOD_TYPE_PROBS[FoodType.RICH])
+                    print(f"Food type probabilities: {FOOD_TYPE_PROBS}")
+                    
+                elif event.key == pygame.K_3:
+                    # Increase superfood probability
+                    FOOD_TYPE_PROBS[FoodType.SUPERFOOD] = min(0.5, FOOD_TYPE_PROBS[FoodType.SUPERFOOD] + 0.05)
+                    # Normalize probabilities
+                    total = sum(FOOD_TYPE_PROBS.values())
+                    for food_type in FOOD_TYPE_PROBS:
+                        if food_type != FoodType.SUPERFOOD:
+                            FOOD_TYPE_PROBS[food_type] *= (1.0 - FOOD_TYPE_PROBS[FoodType.SUPERFOOD]) / (total - FOOD_TYPE_PROBS[FoodType.SUPERFOOD])
+                    print(f"Food type probabilities: {FOOD_TYPE_PROBS}")
+                    
+                elif event.key == pygame.K_4:
+                    # Increase junk food probability
+                    FOOD_TYPE_PROBS[FoodType.JUNK] = min(0.9, FOOD_TYPE_PROBS[FoodType.JUNK] + 0.1)
+                    # Normalize probabilities
+                    total = sum(FOOD_TYPE_PROBS.values())
+                    for food_type in FOOD_TYPE_PROBS:
+                        if food_type != FoodType.JUNK:
+                            FOOD_TYPE_PROBS[food_type] *= (1.0 - FOOD_TYPE_PROBS[FoodType.JUNK]) / (total - FOOD_TYPE_PROBS[FoodType.JUNK])
+                    print(f"Food type probabilities: {FOOD_TYPE_PROBS}")
+                    
+                elif event.key == pygame.K_r:
+                    # Reset food probabilities to default
+                    FOOD_TYPE_PROBS[FoodType.STANDARD] = 0.6
+                    FOOD_TYPE_PROBS[FoodType.RICH] = 0.25
+                    FOOD_TYPE_PROBS[FoodType.SUPERFOOD] = 0.05
+                    FOOD_TYPE_PROBS[FoodType.JUNK] = 0.1
+                    print(f"Food type probabilities reset to default: {FOOD_TYPE_PROBS}")
         
         # Skip simulation if paused
         if paused:
@@ -1102,9 +1455,71 @@ def simulate_continuous_evolution(screen):
                         
                         # When fully decomposed, turn into food and remove organism
                         if organism.decompose_timer >= CORPSE_TO_FOOD_TIME:
-                            # Create food at the organism's position
-                            new_food = Food(position=organism.position)
-                            new_food.energy = 150  # More nutritious than regular food
+                            # Determine food type based on organism traits
+                            # Larger organisms tend to become richer food
+                            # Organisms that have eaten superfood have a chance to become superfood
+                            
+                            # Calculate probabilities based on organism traits
+                            size_factor = organism.genome['size_factor']
+                            metabolism = organism.genome['metabolism']
+                            
+                            # Track what the organism ate in its lifetime
+                            superfood_ratio = organism.food_type_eaten.get(FoodType.SUPERFOOD, 0) / max(1, sum(organism.food_type_eaten.values()))
+                            rich_food_ratio = organism.food_type_eaten.get(FoodType.RICH, 0) / max(1, sum(organism.food_type_eaten.values()))
+                            
+                            # Base probabilities
+                            type_probs = {
+                                FoodType.STANDARD: 0.6,
+                                FoodType.RICH: 0.25,
+                                FoodType.SUPERFOOD: 0.05,
+                                FoodType.JUNK: 0.1
+                            }
+                            
+                            # Modify based on organism traits
+                            # Larger organisms tend to become richer food
+                            if size_factor > 1.1:
+                                type_probs[FoodType.RICH] += 0.15
+                                type_probs[FoodType.STANDARD] -= 0.1
+                                type_probs[FoodType.JUNK] -= 0.05
+                            
+                            # High metabolism organisms might become junk food (used up resources)
+                            if metabolism > 0.25:
+                                type_probs[FoodType.JUNK] += 0.1
+                                type_probs[FoodType.RICH] -= 0.05
+                                type_probs[FoodType.STANDARD] -= 0.05
+                            
+                            # Organisms that ate superfood might become superfood
+                            if superfood_ratio > 0.1:
+                                type_probs[FoodType.SUPERFOOD] += superfood_ratio * 0.3
+                                type_probs[FoodType.STANDARD] -= superfood_ratio * 0.3
+                            
+                            # Organisms that ate rich food might become rich food
+                            if rich_food_ratio > 0.2:
+                                type_probs[FoodType.RICH] += rich_food_ratio * 0.2
+                                type_probs[FoodType.STANDARD] -= rich_food_ratio * 0.2
+                            
+                            # Normalize probabilities
+                            total = sum(type_probs.values())
+                            for food_type in type_probs:
+                                type_probs[food_type] /= total
+                            
+                            # Select food type based on probabilities
+                            r = random.random()
+                            cumulative = 0
+                            selected_type = FoodType.STANDARD  # Default
+                            for food_type, prob in type_probs.items():
+                                cumulative += prob
+                                if r <= cumulative:
+                                    selected_type = food_type
+                                    break
+                            
+                            # Create food at the organism's position with selected type
+                            new_food = Food(position=organism.position, food_type=selected_type)
+                            
+                            # Make corpse-derived food slightly more nutritious
+                            new_food.energy *= 1.2
+                            new_food.age = 100  # Start somewhat "ripened"
+                            
                             foods.append(new_food)
                             
                             # Remove the decomposed organism
@@ -1145,7 +1560,51 @@ def simulate_continuous_evolution(screen):
             else:
                 # All food is active, potentially add a new one if we're below limit
                 if len(foods) < FOOD_COUNT * 2:
-                    foods.append(Food())
+                    # Ensure we maintain reasonable food type distribution
+                    # Add food with weighted probabilities based on current scarcity
+                    
+                    # Count each type of active food to calculate scarcity
+                    food_counts = {
+                        FoodType.STANDARD: 0,
+                        FoodType.RICH: 0, 
+                        FoodType.SUPERFOOD: 0,
+                        FoodType.JUNK: 0
+                    }
+                    
+                    for food in foods:
+                        if food.active:
+                            food_counts[food.food_type] += 1
+                    
+                    # Calculate food type scarcity (invert counts to make scarce types more likely)
+                    type_weights = {}
+                    for food_type in [FoodType.STANDARD, FoodType.RICH, FoodType.SUPERFOOD, FoodType.JUNK]:
+                        # Base probability from global settings
+                        base_prob = FOOD_TYPE_PROBS[food_type]
+                        
+                        # Adjust based on current scarcity (fewer = higher chance)
+                        scarcity_factor = 1.0 - (food_counts[food_type] / max(1, active_food_count))
+                        
+                        # Calculate final weight, ensuring we maintain some baseline probability
+                        type_weights[food_type] = base_prob * (0.5 + 0.5 * scarcity_factor)
+                    
+                    # Normalize weights to sum to 1.0
+                    total_weight = sum(type_weights.values())
+                    if total_weight > 0:
+                        for food_type in type_weights:
+                            type_weights[food_type] /= total_weight
+                    
+                    # Select food type based on adjusted weights
+                    r = random.random()
+                    cumulative = 0
+                    selected_type = FoodType.STANDARD  # Default
+                    for food_type, weight in type_weights.items():
+                        cumulative += weight
+                        if r <= cumulative:
+                            selected_type = food_type
+                            break
+                    
+                    # Add the new food
+                    foods.append(Food(food_type=selected_type))
         
         # Track statistics
         if step % stat_collection_interval == 0:
@@ -1222,11 +1681,57 @@ def draw_simulation(screen, population, foods, obstacles, step, font):
     # Then draw alive ones
     for organism in alive_organisms:
         organism.draw(screen)
+        
+    # Draw food consumption popups if any
+    if hasattr(Organism, 'food_popups') and not FAST_MODE:
+        popups_to_keep = []
+        
+        for popup in Organism.food_popups:
+            # Update popup
+            popup['lifetime'] -= 1
+            popup['y_offset'] -= 0.5  # Float upward
+            
+            # Draw popup with fade out effect
+            alpha = min(255, int(255 * popup['lifetime'] / 30))
+            
+            # Create a surface with alpha
+            popup_alpha_surf = pygame.Surface((popup['text'].get_width(), popup['text'].get_height()), 
+                                            pygame.SRCALPHA)
+            popup_alpha_surf.fill((0, 0, 0, 0))  # Transparent
+            
+            # Blit text onto alpha surface with fading
+            popup_alpha_surf.blit(popup['text'], (0, 0))
+            popup_alpha_surf.set_alpha(alpha)
+            
+            # Draw to screen
+            screen.blit(popup_alpha_surf, 
+                       (popup['position'][0] - popup['text'].get_width()//2, 
+                        popup['position'][1] - 15 + int(popup['y_offset'])))
+            
+            # Keep if still alive
+            if popup['lifetime'] > 0:
+                popups_to_keep.append(popup)
+                
+        # Update the list
+        Organism.food_popups = popups_to_keep
     
     # Calculate statistics
     alive_count = len(alive_organisms)
     total_count = len(population)
-    active_food = sum(1 for food in foods if food.active)
+    
+    # Count each type of active food
+    food_counts = {
+        FoodType.STANDARD: 0,
+        FoodType.RICH: 0,
+        FoodType.SUPERFOOD: 0,
+        FoodType.JUNK: 0
+    }
+    
+    for food in foods:
+        if food.active:
+            food_counts[food.food_type] += 1
+            
+    active_food = sum(food_counts.values())
     
     max_gen = max((o.generation for o in population), default=1)
     avg_gen = sum(o.generation for o in population) / max(1, len(population))
@@ -1247,13 +1752,56 @@ def draw_simulation(screen, population, foods, obstacles, step, font):
     stats_text = [
         f"Step: {step} | Population: {alive_count}/{total_count} | Food: {active_food}/{len(foods)}",
         f"Generations: Avg {avg_gen:.1f} | Max {max_gen} | Species: {species_count}",
-        f"Obstacles: {len(obstacles) - poop_count}/{poop_count} | {'FAST MODE' if FAST_MODE else 'DETAILED MODE'} | P: pause"
+        f"Obstacles: {len(obstacles) - poop_count}/{poop_count} | {'FAST MODE' if FAST_MODE else 'DETAILED MODE'} | P: pause",
+        f"Food Controls: 1-4 adjust food types, R: reset distribution"
     ]
+    
+    # Add food type distribution
+    if not FAST_MODE:
+        # Draw food type legend
+        legend_y = 75
+        legend_text = "Food Types: "
+        legend_surf = font.render(legend_text, True, BLACK)
+        screen.blit(legend_surf, (10, legend_y))
+        
+        # Draw colored circles for each food type
+        circle_size = 8
+        x_offset = 10 + legend_surf.get_width() + 5
+        
+        # Display all food types with consistent formatting
+        for food_type in [FoodType.STANDARD, FoodType.RICH, FoodType.SUPERFOOD, FoodType.JUNK]:
+            color = FOOD_COLORS[food_type]
+            pygame.draw.circle(screen, color, (x_offset, legend_y + circle_size), circle_size)
+            
+            # Add a small glow effect for superfood and rich food to match their appearance
+            if food_type == FoodType.SUPERFOOD or food_type == FoodType.RICH:
+                glow_radius = circle_size + 2
+                glow_color = (color[0], color[1], color[2], 100)  # Semi-transparent
+                glow_surf = pygame.Surface((40, 40), pygame.SRCALPHA)
+                pygame.draw.circle(glow_surf, glow_color, (circle_size, circle_size), glow_radius)
+                screen.blit(glow_surf, (x_offset - circle_size, legend_y))
+            
+            # Display count with food type name
+            count_text = f"{FOOD_TYPE_NAMES[food_type]}: {food_counts[food_type]}"
+            
+            # Add nutritional value indicator
+            if food_type == FoodType.STANDARD:
+                count_text += " (100)"
+            elif food_type == FoodType.RICH:
+                count_text += " (200)"
+            elif food_type == FoodType.SUPERFOOD:
+                count_text += " (400)"
+            elif food_type == FoodType.JUNK:
+                count_text += " (50)"
+                
+            food_surf = font.render(count_text, True, BLACK)
+            screen.blit(food_surf, (x_offset + circle_size + 5, legend_y))
+            x_offset += food_surf.get_width() + 20
     
     # Add species key if we have tracked species and in detailed mode
     if not FAST_MODE and species_count > 0:
         # Draw species legend
-        legend_y = 75
+        legend_y = 100  # Below food type legend
         legend_text = "Species: "
         legend_surf = font.render(legend_text, True, BLACK)
         screen.blit(legend_surf, (10, legend_y))
@@ -1283,6 +1831,18 @@ def draw_simulation(screen, population, foods, obstacles, step, font):
                 # Add count
                 count_surf = font.render(f"{species_info['count']}", True, BLACK)
                 screen.blit(count_surf, (x_offset + square_size + 15, legend_y))
+                
+                # Show food specialization if any
+                if 'specialized_food' in species_info and species_info['specialized_food'] is not None:
+                    food_type = species_info['specialized_food']
+                    # Add a small indicator of the food type specialized in
+                    food_color = FOOD_COLORS[food_type]
+                    pygame.draw.circle(screen, food_color, 
+                                     (x_offset + square_size + 35, legend_y + square_size//2), 4)
+                    
+                    # Add a small "S" for "specialized"
+                    spec_surf = font.render("S", True, BLACK)
+                    screen.blit(spec_surf, (x_offset + square_size + 40, legend_y))
                 
                 x_offset += square_size + 40
     

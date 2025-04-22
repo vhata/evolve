@@ -12,6 +12,7 @@ Evolve is a digital ecosystem simulator that models evolutionary processes in a 
 The primary simulation models a complete ecosystem with the following elements:
 
 ### Environment
+- Multiple food types with varying nutritional values (standard, rich, superfood, junk)
 - Food resources that grow and become more nutritious over time
 - Obstacles that can be eroded through interaction
 - Continuous, persistent world (no discrete generations)
@@ -20,10 +21,12 @@ The primary simulation models a complete ecosystem with the following elements:
 ### Organisms
 - Sensory systems with variable vision range and field of view
 - Neural-like decision making for food seeking and obstacle avoidance
+- Food preferences that evolve through natural selection
 - Metabolism, energy management, and natural death
 - Reproduction when energy thresholds are met
 - Genetic mutations that affect behavior and physical traits
 - Species identification based on genetic similarity
+- Species can specialize in particular food types
 
 ### Visual Interface
 - Real-time visualization of the ecosystem
@@ -73,12 +76,14 @@ python shape_evolution.py
 
 - **Space**: Toggle between fast mode and detailed mode
 - **P**: Pause/resume simulation
+- **1-4**: Adjust probabilities of different food types appearing
+- **R**: Reset food type distribution to default
 
 ## TODO - Future Enhancements
 
 ### Environmental Complexity
 - [ ] Add seasonal changes where food availability fluctuates
-- [ ] Introduce different food types with varying nutritional value
+- [x] Introduce different food types with varying nutritional value
 - [ ] Create varied terrain (water, land, mountains) with different movement costs
 - [ ] Implement weather patterns that affect organism movement/energy consumption
 - [ ] Add day/night cycles that affect visibility and behavior
