@@ -21,6 +21,8 @@ FOOD_RESPAWN_RATE = 0.02  # Probability of new food appearing each frame
 OBSTACLE_MOVE_CHANCE = 0.005  # Probability of obstacle moving each frame
 OBSTACLE_SPEED = 1.0  # Speed at which obstacles move
 CORPSE_DECAY_TIME = 500  # How long dead organisms stay visible
+CORPSE_TO_FOOD_TIME = 350  # How long until a corpse becomes food
+OBSTACLE_EROSION_AMOUNT = 2  # How much obstacles shrink when hit
 
 # Colors
 WHITE = (255, 255, 255)
@@ -80,6 +82,21 @@ class Obstacle:
         self.direction = random.uniform(0, 2 * math.pi)
         self.speed = 0 
         self.stationary = random.random() < 0.6  # 60% chance to be stationary
+        self.initial_radius = self.radius  # Track original size for visual effects
+        self.eroded = False  # Track if obstacle has been eroded
+        self.min_radius = 8  # Minimum size before disappearing
+        
+    def erode(self):
+        # Reduce size when hit
+        self.radius = max(self.min_radius, self.radius - OBSTACLE_EROSION_AMOUNT)
+        self.eroded = True
+        
+        # Increase speed slightly if mobile obstacle is hit (broken pieces move faster)
+        if not self.stationary:
+            self.speed = min(OBSTACLE_SPEED * 1.5, self.speed * 1.2)
+            
+        # Return True if obstacle should be removed
+        return self.radius <= self.min_radius
         
     def update(self):
         # Occasionally change direction or start/stop moving
@@ -98,6 +115,10 @@ class Obstacle:
                 else:
                     # Change direction slightly
                     self.direction += random.uniform(-0.5, 0.5)
+                    
+        # Occasionally eroded obstacles crumble more
+        if self.eroded and random.random() < 0.001:
+            self.radius = max(self.min_radius, self.radius - 1)
                 
         # Move if not stationary
         if not self.stationary:
@@ -116,13 +137,45 @@ class Obstacle:
             self.position = (new_x, new_y)
         
     def draw(self, surface):
+        # Skip if too small
+        if self.radius <= self.min_radius:
+            return
+            
         # Draw obstacle as a rock with texture
-        pygame.draw.circle(surface, BROWN, (int(self.position[0]), int(self.position[1])), self.radius)
+        rock_color = BROWN
+        
+        # If eroded, make color slightly different
+        if self.eroded:
+            # More grey as it erodes
+            erosion_factor = (self.initial_radius - self.radius) / (self.initial_radius - self.min_radius)
+            rock_color = (
+                min(255, BROWN[0] + int(50 * erosion_factor)),
+                min(255, BROWN[1] + int(50 * erosion_factor)),
+                min(255, BROWN[2] + int(50 * erosion_factor))
+            )
+        
+        pygame.draw.circle(surface, rock_color, (int(self.position[0]), int(self.position[1])), self.radius)
+        
         # Add darker shading on one side
         pygame.draw.arc(surface, GRAY, 
                       (int(self.position[0] - self.radius), int(self.position[1] - self.radius),
                        self.radius * 2, self.radius * 2),
-                      math.pi/4, math.pi, self.radius//2)
+                      math.pi/4, math.pi, max(2, self.radius//2))
+                      
+        # Add cracks if eroded
+        if self.eroded:
+            # Draw some random cracks
+            crack_start = self.position
+            for _ in range(min(5, int(erosion_factor * 10))):
+                crack_length = random.uniform(0.3, 0.9) * self.radius
+                crack_angle = random.uniform(0, 2 * math.pi)
+                crack_end = (
+                    crack_start[0] + math.cos(crack_angle) * crack_length,
+                    crack_start[1] + math.sin(crack_angle) * crack_length
+                )
+                pygame.draw.line(surface, (50, 50, 50), 
+                              (int(crack_start[0]), int(crack_start[1])),
+                              (int(crack_end[0]), int(crack_end[1])), 1)
                       
         # Add a small indicator if the obstacle is mobile
         if not self.stationary:
@@ -156,6 +209,8 @@ class Organism:
         self.age = 0  # Age in simulation steps
         self.reproduction_cooldown = 0  # Cooldown before reproducing again
         self.time_of_death = None  # When the organism died (for decaying corpses)
+        self.decomposing = False  # Whether the corpse is turning into food
+        self.decompose_timer = 0  # Track decomposition progress
         self.generation = 1 if parent is None else parent.generation + 1  # Track organism generation
         self.color_variation = (
             random.randint(-20, 20),
@@ -325,11 +380,17 @@ class Organism:
             
         # Check obstacle collision
         can_move = True
-        for obstacle in obstacles:
+        for obstacle in obstacles[:]:  # Use a copy for safe iteration
             if obstacle.collides_with(new_x, new_y, self.radius):
                 can_move = False
                 self.direction += math.pi + random.uniform(-0.5, 0.5)  # Bounce with some randomness
                 self.energy -= 10  # Energy penalty for hitting obstacle
+                
+                # Erode the obstacle
+                if obstacle.erode():
+                    # If obstacle is destroyed, remove it
+                    obstacles.remove(obstacle)
+                
                 break
                 
         if can_move:
@@ -401,16 +462,59 @@ class Organism:
             else:
                 alpha = 150  # Default value if time_of_death not set
                 
-            # Draw dead organism as a gray "X" with fading
-            size = int(self.radius * 0.8)
-            color = (100, 100, 100, alpha)
-            
-            # Create transparent surface
+            # Create transparent surface for drawing dead organism
             death_surf = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-            pygame.draw.line(death_surf, color, 
-                           (x - size, y - size), (x + size, y + size), 2)
-            pygame.draw.line(death_surf, color, 
-                           (x + size, y - size), (x - size, y + size), 2)
+            
+            if self.decomposing:
+                # Draw decomposing organism (turning green/brown)
+                # Calculate decomposition progress (0 to 1)
+                decomp_progress = min(1.0, self.decompose_timer / CORPSE_TO_FOOD_TIME)
+                
+                # Color shifts from grey to green/brown as it decomposes
+                gray_component = max(20, int(100 * (1 - decomp_progress)))
+                green_component = min(200, int(100 + 100 * decomp_progress))
+                brown_component = min(100, int(20 + 80 * decomp_progress))
+                
+                decomp_color = (brown_component, green_component, gray_component, alpha)
+                
+                # Draw as a blob that's becoming more circular
+                if decomp_progress < 0.5:
+                    # Still somewhat X-shaped but becoming rounded
+                    size = int(self.radius * 0.8)
+                    pygame.draw.line(death_surf, decomp_color, 
+                                   (x - size, y - size), (x + size, y + size), 
+                                   max(1, int(4 * (1 - decomp_progress))))
+                    pygame.draw.line(death_surf, decomp_color, 
+                                   (x + size, y - size), (x - size, y + size), 
+                                   max(1, int(4 * (1 - decomp_progress))))
+                    
+                    # Add some circular blob elements
+                    pygame.draw.circle(death_surf, decomp_color, (x, y), 
+                                     int(self.radius * 0.5 * decomp_progress))
+                else:
+                    # Mostly circular with some bumps for texture
+                    pygame.draw.circle(death_surf, decomp_color, (x, y), 
+                                     int(self.radius * 0.6))
+                    
+                    # Add some texture with small circles
+                    for i in range(4):
+                        angle = random.uniform(0, 2 * math.pi)
+                        dist = random.uniform(0.3, 0.8) * self.radius
+                        spot_x = x + math.cos(angle) * dist
+                        spot_y = y + math.sin(angle) * dist
+                        spot_size = random.uniform(1, 3)
+                        pygame.draw.circle(death_surf, decomp_color, 
+                                         (int(spot_x), int(spot_y)), int(spot_size))
+            else:
+                # Regular dead organism as an "X"
+                size = int(self.radius * 0.8)
+                color = (100, 100, 100, alpha)
+                
+                pygame.draw.line(death_surf, color, 
+                               (x - size, y - size), (x + size, y + size), 2)
+                pygame.draw.line(death_surf, color, 
+                               (x + size, y - size), (x - size, y + size), 2)
+                
             surface.blit(death_surf, (0, 0))
             return
             
@@ -736,15 +840,38 @@ def simulate_continuous_evolution(screen):
         # Update step counter
         step += 1
         
-        # Update organisms
+        # Update organisms and handle corpse decomposition
         alive_count = 0
         for organism in population[:]:  # Create a copy of the list for safe iteration
             if organism.alive:
                 organism.update(foods, obstacles, population)
                 alive_count += 1
-            elif organism.time_of_death and time.time() - organism.time_of_death > CORPSE_DECAY_TIME / FPS:
-                # Remove completely decayed corpses
-                population.remove(organism)
+            else:
+                # Handle dead organisms
+                if organism.time_of_death:
+                    time_since_death = time.time() - organism.time_of_death
+                    
+                    # Start decomposition after a delay
+                    if not organism.decomposing and time_since_death > CORPSE_DECAY_TIME / (FPS * 3):
+                        organism.decomposing = True
+                        
+                    # Update decomposition state
+                    if organism.decomposing:
+                        organism.decompose_timer += 1
+                        
+                        # When fully decomposed, turn into food and remove organism
+                        if organism.decompose_timer >= CORPSE_TO_FOOD_TIME:
+                            # Create food at the organism's position
+                            new_food = Food(position=organism.position)
+                            new_food.energy = 150  # More nutritious than regular food
+                            foods.append(new_food)
+                            
+                            # Remove the decomposed organism
+                            population.remove(organism)
+                    
+                    # Remove very old corpses that haven't decomposed for some reason
+                    elif time_since_death > CORPSE_DECAY_TIME / FPS:
+                        population.remove(organism)
         
         # Update food and obstacles
         for food in foods:
@@ -752,6 +879,10 @@ def simulate_continuous_evolution(screen):
             
         for obstacle in obstacles:
             obstacle.update()
+            
+        # Regenerate obstacles occasionally if too few remain
+        if len(obstacles) < OBSTACLE_COUNT * 0.6 and random.random() < 0.01:
+            obstacles.append(Obstacle())
         
         # Regenerate food occasionally
         food_respawn_timer += 1
@@ -842,7 +973,7 @@ def draw_simulation(screen, population, foods, obstacles, step, font):
     # Display statistics
     stats_text = [
         f"Step: {step} | Population: {alive_count}/{total_count} | Food: {active_food}/{len(foods)}",
-        f"Generations: Avg {avg_gen:.1f} | Max {max_gen}",
+        f"Generations: Avg {avg_gen:.1f} | Max {max_gen} | Obstacles: {len(obstacles)}",
         f"{'FAST MODE' if FAST_MODE else 'DETAILED MODE'} - Press SPACE to toggle | Press P to pause"
     ]
     
